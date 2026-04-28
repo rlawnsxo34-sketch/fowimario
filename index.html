@@ -87,7 +87,10 @@
       const [isAnalyzing, setIsAnalyzing] = useState(false);
       const [result, setResult] = useState(null);
       const [error, setError] = useState(null);
-      const fileInputRef = useRef(null);
+      
+      // 변경점: 카메라용과 앨범용 입력 장치를 분리
+      const cameraInputRef = useRef(null);
+      const albumInputRef = useRef(null);
 
       // 도감 저장 상태
       const [plants, setPlants] = useState([]);
@@ -102,6 +105,9 @@
       const [loginPassword, setLoginPassword] = useState('');
       const [authError, setAuthError] = useState('');
       const DUMMY_DOMAIN = "@plant.local"; 
+
+      // 추가 기능 상태: 사진 가져오기 방식 선택 모달
+      const [showImageSourceModal, setShowImageSourceModal] = useState(false);
 
       // Google Studio API Key
       const apiKey = "AIzaSyB9K2WbayGieoKNN82MF27UZuQTv4lDUic";
@@ -330,7 +336,9 @@
         setResult(null);
         setError(null);
         setSaveSuccess(false);
-        if (fileInputRef.current) fileInputRef.current.value = "";
+        // 변경점: 분리된 입력창 초기화
+        if (cameraInputRef.current) cameraInputRef.current.value = "";
+        if (albumInputRef.current) albumInputRef.current.value = "";
       };
 
       return (
@@ -383,7 +391,8 @@
 
                 <div className="bg-white p-2.5 rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
                   {!selectedImage ? (
-                    <div onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-emerald-200 bg-emerald-50/30 rounded-[1.5rem] h-80 flex flex-col items-center justify-center gap-5 cursor-pointer hover:bg-emerald-50 active:scale-[0.98] transition-all group">
+                    // 변경점: 클릭 시 파일 입력창이 아닌 선택 모달을 띄우도록 변경
+                    <div onClick={() => setShowImageSourceModal(true)} className="border-2 border-dashed border-emerald-200 bg-emerald-50/30 rounded-[1.5rem] h-80 flex flex-col items-center justify-center gap-5 cursor-pointer hover:bg-emerald-50 active:scale-[0.98] transition-all group">
                       <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm text-emerald-500 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300">
                         <i class="ph ph-camera text-3xl"></i>
                       </div>
@@ -403,8 +412,9 @@
                       )}
                     </div>
                   )}
-                  {/* 변경점: capture="environment" 속성을 제거하여 카메라/앨범 선택창이 뜨도록 수정 */}
-                  <input type="file" accept="image/*" onChange={handleImageChange} ref={fileInputRef} className="hidden" />
+                  {/* 변경점: 두 가지 방식의 숨겨진 입력창 준비 */}
+                  <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} ref={cameraInputRef} className="hidden" />
+                  <input type="file" accept="image/*" onChange={handleImageChange} ref={albumInputRef} className="hidden" />
                 </div>
 
                 {selectedImage && !result && !isAnalyzing && (
@@ -514,6 +524,39 @@
               </button>
             </div>
           </nav>
+
+          {/* 추가된 팝업: 사진 가져오기 방식 선택 모달 */}
+          {showImageSourceModal && (
+            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-5">
+              <div className="bg-white rounded-t-[2rem] sm:rounded-[2.5rem] w-full max-w-sm p-6 space-y-4 shadow-2xl animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-200 pb-safe">
+                <div className="text-center mb-4">
+                  <h3 className="text-xl font-black text-slate-800">사진 가져오기</h3>
+                  <p className="text-sm text-slate-500 font-medium mt-1">어떤 방법으로 식물 사진을 올릴까요?</p>
+                </div>
+                
+                <button 
+                  onClick={() => { cameraInputRef.current?.click(); setShowImageSourceModal(false); }} 
+                  className="w-full py-4 bg-emerald-50 text-emerald-700 font-bold rounded-2xl flex items-center justify-center gap-3 hover:bg-emerald-100 transition-colors border border-emerald-100 shadow-sm"
+                >
+                  <i class="ph ph-camera text-2xl"></i> 지금 카메라로 찍기
+                </button>
+                
+                <button 
+                  onClick={() => { albumInputRef.current?.click(); setShowImageSourceModal(false); }} 
+                  className="w-full py-4 bg-slate-50 text-slate-700 font-bold rounded-2xl flex items-center justify-center gap-3 hover:bg-slate-100 transition-colors border border-slate-200 shadow-sm"
+                >
+                  <i class="ph ph-images text-2xl"></i> 앨범에서 사진 선택
+                </button>
+                
+                <button 
+                  onClick={() => setShowImageSourceModal(false)} 
+                  className="w-full py-4 text-slate-400 font-bold rounded-2xl hover:text-slate-600 hover:bg-slate-50 transition-colors mt-2"
+                >
+                  취소
+                </button>
+              </div>
+            </div>
+          )}
 
           {showLoginModal && (
             <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-5">
