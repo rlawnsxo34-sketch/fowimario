@@ -36,6 +36,7 @@
     import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
     import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
+    // 파이어베이스 설정
     const firebaseConfig = {
       apiKey: "AIzaSyCZjnNVl9MkH2nqQ9O0vhKibiwGl-0ysRU",
       authDomain: "plant-book-84803.firebaseapp.com",
@@ -69,7 +70,6 @@
       const [currentTab, setCurrentTab] = useState('camera');
       
       const [selectedImage, setSelectedImage] = useState(null);
-      const [selectedFile, setSelectedFile] = useState(null);
       const [compressedImageUrl, setCompressedImageUrl] = useState(null);
       const [isAnalyzing, setIsAnalyzing] = useState(false);
       const [result, setResult] = useState(null);
@@ -90,7 +90,7 @@
       const DUMMY_DOMAIN = "@plant.local"; 
       const [showImageSourceModal, setShowImageSourceModal] = useState(false);
 
-      // 🌟 전달해주신 식물 전용 플랜트넷 API 키 적용 완료
+      // 발급받으신 플랜트넷 API 키 적용
       const plantNetApiKey = "2b10Xd7k9obw7ZFJzVTET8O";
 
       useEffect(() => {
@@ -134,6 +134,19 @@
         try { await signOut(auth); await signInAnonymously(auth); } catch (err) {}
       };
 
+      // 이미지 압축 데이터를 Blob(파일 형태)으로 변환하는 함수
+      const dataURItoBlob = (dataURI) => {
+        const byteString = atob(dataURI.split(',')[1]);
+        const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let i = 0; i < byteString.length; i++) {
+          ia[i] = byteString.charCodeAt(i);
+        }
+        return new Blob([ab], { type: mimeString });
+      };
+
+      // 이미지 용량 압축 함수
       const compressImage = (file) => {
         return new Promise((resolve) => {
           const reader = new FileReader();
@@ -149,7 +162,7 @@
               canvas.width = width; canvas.height = height;
               const ctx = canvas.getContext('2d');
               ctx.drawImage(img, 0, 0, width, height);
-              resolve(canvas.toDataURL('image/jpeg', 0.7));
+              resolve(canvas.toDataURL('image/jpeg', 0.7)); // 품질 70%로 압축
             };
           };
         });
@@ -158,10 +171,7 @@
       const handleImageChange = async (e) => {
         const file = e.target.files[0];
         if (file) {
-          // 안정성 점검 1: 기존 메모리에 남은 미리보기 이미지가 있으면 찌꺼기 제거 (메모리 누수 방지)
           if (selectedImage) URL.revokeObjectURL(selectedImage);
-
-          setSelectedFile(file);
           setSelectedImage(URL.createObjectURL(file));
           setResult(null); setError(null); setSaveSuccess(false);
           const compressedDataUrl = await compressImage(file);
@@ -171,14 +181,16 @@
 
       // 💡 플랜트넷 API 식물 분석 기능
       const analyzePlant = async () => {
-        if (!selectedFile || isAnalyzing) return; // 다중 클릭 방지 (안정성 점검 3)
+        if (!compressedImageUrl || isAnalyzing) return; 
 
         setIsAnalyzing(true);
         setError(null);
 
         try {
           const formData = new FormData();
-          formData.append('images', selectedFile);
+          // 원본 파일 대신 용량이 작게 압축된 이미지를 파일 형태로 서버에 보냅니다.
+          const imageBlob = dataURItoBlob(compressedImageUrl);
+          formData.append('images', imageBlob, 'plant.jpg');
           formData.append('organs', 'auto'); 
 
           const url = `https://my-api.plantnet.org/v2/identify/all?api-key=${plantNetApiKey}&lang=ko`;
@@ -189,7 +201,6 @@
           });
 
           if (!response.ok) {
-            // 안정성 점검 2: 식물이 아닌 사진(사람, 동물 등)을 올렸을 때 나오는 404 에러를 친절하게 안내
             if (response.status === 404) {
               throw new Error("사진에서 식물을 찾지 못했어요. 식물 잎이나 꽃이 잘 보이게 다시 찍어주세요!");
             } else if (response.status === 401 || response.status === 403) {
@@ -224,7 +235,7 @@
       };
 
       const saveToDictionary = async () => {
-        if (!user || !result || !compressedImageUrl || isSaving) return; // 다중 클릭 방지
+        if (!user || !result || !compressedImageUrl || isSaving) return; 
         setIsSaving(true);
         try {
           const plantsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'plants');
@@ -244,13 +255,12 @@
       };
 
       const resetApp = () => {
-        if (selectedImage) URL.revokeObjectURL(selectedImage); // 메모리 확보
-        setSelectedImage(null); setSelectedFile(null); setCompressedImageUrl(null); setResult(null); setError(null); setSaveSuccess(false);
+        if (selectedImage) URL.revokeObjectURL(selectedImage); 
+        setSelectedImage(null); setCompressedImageUrl(null); setResult(null); setError(null); setSaveSuccess(false);
         if (cameraInputRef.current) cameraInputRef.current.value = "";
         if (albumInputRef.current) albumInputRef.current.value = "";
       };
 
-      // 화면 배경 터치 시 모달 닫기 (안정성 점검 4)
       const handleModalBackgroundClick = (e) => {
         if (e.target === e.currentTarget) {
           setShowImageSourceModal(false);
