@@ -88,7 +88,7 @@
       const [result, setResult] = useState(null);
       const [error, setError] = useState(null);
       
-      // 변경점: 카메라용과 앨범용 입력 장치를 분리
+      // 카메라용과 앨범용 입력 장치를 분리
       const cameraInputRef = useRef(null);
       const albumInputRef = useRef(null);
 
@@ -236,15 +236,20 @@
         }
       };
 
-      // API 호출 로직
+      // API 호출 로직 (에러 발생 시 즉각 중단하도록 수정)
       const fetchWithRetry = async (url, options, retries = 5) => {
         const delays = [1000, 2000, 4000, 8000, 16000];
         for (let i = 0; i < retries; i++) {
           try {
             const response = await fetch(url, options);
-            if (!response.ok) throw new Error(`API 오류 (${response.status})`);
+            if (!response.ok) {
+              const errText = await response.text();
+              throw new Error(`API 오류 (${response.status}): ${errText}`);
+            }
             return await response.json();
           } catch (err) {
+            // 404 에러(모델 없음/차단)는 재시도해도 의미가 없으므로 즉시 에러를 던져 우회 로직으로 넘김
+            if (err.message.includes('404')) throw err;
             if (i === retries - 1) throw err;
             await new Promise(resolve => setTimeout(resolve, delays[i]));
           }
@@ -263,8 +268,6 @@
         setError(null);
 
         try {
-          // 외부 환경에서 작동할 수 있도록 범용 모델(1.5-flash)로 변경
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
           const payload = {
             contents: [{
               role: "user",
@@ -276,11 +279,27 @@
             generationConfig: { responseMimeType: "application/json" }
           };
 
-          const data = await fetchWithRetry(url, {
+          const options = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
-          });
+          };
+
+          let data;
+          try {
+            // 1. 외부 배포용 (GitHub Pages 등) 정식 모델 시도
+            const mainUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+            data = await fetchWithRetry(mainUrl, options);
+          } catch (apiErr) {
+            // 2. 우측 미리보기 환경(Canvas)에서 404 차단 발생 시 내부 전용 모델로 자동 우회
+            if (apiErr.message.includes('404')) {
+              console.warn("미리보기 환경 제한 감지됨. 대체 모델로 우회합니다.");
+              const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+              data = await fetchWithRetry(fallbackUrl, options);
+            } else {
+              throw apiErr;
+            }
+          }
 
           let jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
           if (jsonText) {
@@ -293,7 +312,7 @@
             throw new Error("분석 결과를 가져오지 못했습니다.");
           }
         } catch (err) {
-          console.error("Analysis Error:", err); // 에러 내용 확인용 로그 추가
+          console.error("Analysis Error:", err); // 에러 내용 확인용 로그
           setError("앗! 식물을 인식하는 데 문제가 생겼어요. 다시 시도해 주세요.");
         } finally {
           setIsAnalyzing(false);
@@ -336,7 +355,6 @@
         setResult(null);
         setError(null);
         setSaveSuccess(false);
-        // 변경점: 분리된 입력창 초기화
         if (cameraInputRef.current) cameraInputRef.current.value = "";
         if (albumInputRef.current) albumInputRef.current.value = "";
       };
@@ -391,7 +409,6 @@
 
                 <div className="bg-white p-2.5 rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
                   {!selectedImage ? (
-                    // 변경점: 클릭 시 파일 입력창이 아닌 선택 모달을 띄우도록 변경
                     <div onClick={() => setShowImageSourceModal(true)} className="border-2 border-dashed border-emerald-200 bg-emerald-50/30 rounded-[1.5rem] h-80 flex flex-col items-center justify-center gap-5 cursor-pointer hover:bg-emerald-50 active:scale-[0.98] transition-all group">
                       <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm text-emerald-500 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300">
                         <i class="ph ph-camera text-3xl"></i>
@@ -412,7 +429,6 @@
                       )}
                     </div>
                   )}
-                  {/* 변경점: 두 가지 방식의 숨겨진 입력창 준비 */}
                   <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} ref={cameraInputRef} className="hidden" />
                   <input type="file" accept="image/*" onChange={handleImageChange} ref={albumInputRef} className="hidden" />
                 </div>
@@ -525,7 +541,6 @@
             </div>
           </nav>
 
-          {/* 추가된 팝업: 사진 가져오기 방식 선택 모달 */}
           {showImageSourceModal && (
             <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-5">
               <div className="bg-white rounded-t-[2rem] sm:rounded-[2.5rem] w-full max-w-sm p-6 space-y-4 shadow-2xl animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-200 pb-safe">
