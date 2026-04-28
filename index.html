@@ -1,599 +1,557 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Leaf, RefreshCw, AlertCircle, Loader2, BookOpen, Save, CheckCircle2, Trash2, Info, LogIn, LogOut } from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
-
-// --- Firebase 초기화 설정 (내 프로젝트 값으로 변경됨) ---
-const firebaseConfig = {
-  apiKey: "AIzaSyCZjnNVl9MkH2nqQ9O0vhKibiwGl-0ysRU",
-  authDomain: "plant-book-84803.firebaseapp.com",
-  projectId: "plant-book-84803",
-  storageBucket: "plant-book-84803.firebasestorage.app",
-  messagingSenderId: "76598088689",
-  appId: "1:76598088689:web:334a3735566fa37c01aa50",
-  measurementId: "G-ZYMY9HW5CT"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-export default function App() {
-  // 앱 기본 상태
-  const [user, setUser] = useState(null);
-  const [currentTab, setCurrentTab] = useState('camera'); // 'camera' 또는 'dictionary'
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>우리가족 식물 도감</title>
   
-  // 카메라 및 분석 상태
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [imageBase64, setImageBase64] = useState(null); // base64 데이터 (앞의 태그 제외)
-  const [compressedImageUrl, setCompressedImageUrl] = useState(null); // DB 저장용 압축 이미지 URL (태그 포함)
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
-  const fileInputRef = useRef(null);
+  <!-- Tailwind CSS (디자인) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Phosphor Icons (아이콘) -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  
+  <!-- React & ReactDOM (UI 라이브러리) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel (JSX를 브라우저가 읽을 수 있게 변환) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  // 도감 저장 상태
-  const [plants, setPlants] = useState([]);
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  <style>
+    /* iOS 안전 영역 대응 및 기본 설정 */
+    body { -webkit-tap-highlight-color: transparent; }
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom, 20px); }
+  </style>
+</head>
+<body class="bg-[#F4F8F5]">
+  <div id="root">
+    <!-- 초기 로딩 화면 -->
+    <div class="min-h-screen flex flex-col items-center justify-center text-emerald-600 gap-4">
+      <i class="ph ph-spinner animate-spin text-5xl"></i>
+      <p class="font-bold">도감을 준비하고 있어요...</p>
+    </div>
+  </div>
 
-  // --- 추가 기능 상태 ---
-  const [analysisCache, setAnalysisCache] = useState({}); // 분석 결과 캐싱
-  const [visibleCount, setVisibleCount] = useState(10); // 도감 페이징(더 보기)용
+  <!-- Firebase 연동 설정 (모듈) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-  // --- 간편 로그인 (아이디/비밀번호) 상태 ---
-  const [showLoginModal, setShowLoginModal] = useState(false);
-  const [loginId, setLoginId] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [authError, setAuthError] = useState('');
-  const DUMMY_DOMAIN = "@plant.local"; 
-
-  // --- Google Studio API 키 적용 ---
-  const apiKey = "AIzaSyB9K2WbayGieoKNN82MF27UZuQTv4lDUic"; 
-
-  // --- 간편 로그인 / 가입 처리 ---
-  const handleSignUp = async () => {
-    if (!loginId || loginPassword.length < 6) {
-      setAuthError("아이디와 6자리 이상 비밀번호를 입력해주세요.");
-      return;
-    }
-    try {
-      // Firebase 이메일 인증을 활용하기 위해 시스템 내부용 더미 도메인을 붙임
-      const fakeEmail = `${loginId}${DUMMY_DOMAIN}`;
-      await createUserWithEmailAndPassword(auth, fakeEmail, loginPassword);
-      setShowLoginModal(false);
-      setLoginId('');
-      setLoginPassword('');
-    } catch (err) {
-      if (err.code === 'auth/email-already-in-use') {
-        setAuthError("이미 누군가 사용 중인 아이디입니다.");
-      } else {
-        setAuthError("가입에 실패했습니다. 아이디를 영문/숫자로 확인해주세요.");
-      }
-    }
-  };
-
-  const handleLogin = async () => {
-    if (!loginId || loginPassword.length < 6) {
-      setAuthError("아이디와 6자리 이상 비밀번호를 입력해주세요.");
-      return;
-    }
-    try {
-      const fakeEmail = `${loginId}${DUMMY_DOMAIN}`;
-      await signInWithEmailAndPassword(auth, fakeEmail, loginPassword);
-      setShowLoginModal(false);
-      setLoginId('');
-      setLoginPassword('');
-    } catch (err) {
-      setAuthError("아이디 또는 비밀번호가 틀렸습니다.");
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      // 로그아웃 후 앱이 멈추지 않도록 다시 익명 계정으로 세팅
-      await signInAnonymously(auth);
-    } catch (err) {
-      console.error("로그아웃 실패:", err);
-    }
-  };
-
-  // --- Firebase 인증 처리 (앱 실행 시 최초 1회) ---
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("인증 실패:", err);
-      }
+    // 전달해주신 Firebase 설정값
+    const firebaseConfig = {
+      apiKey: "AIzaSyCZjnNVl9MkH2nqQ9O0vhKibiwGl-0ysRU",
+      authDomain: "plant-book-84803.firebaseapp.com",
+      projectId: "plant-book-84803",
+      storageBucket: "plant-book-84803.firebasestorage.app",
+      messagingSenderId: "76598088689",
+      appId: "1:76598088689:web:334a3735566fa37c01aa50",
+      measurementId: "G-ZYMY9HW5CT"
     };
-    initAuth();
 
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, []);
-
-  // --- 내 도감 데이터 불러오기 (로그인 성공 후) ---
-  useEffect(() => {
-    if (!user) return;
-
-    // 개인화된 데이터 경로: artifacts/{appId}/users/{userId}/plants
-    const plantsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'plants');
+    // Firebase 초기화
+    const app = initializeApp(firebaseConfig);
     
-    const unsubscribe = onSnapshot(plantsRef, (snapshot) => {
-      const plantData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // 복잡한 쿼리 대신 메모리에서 최신순으로 정렬
-      plantData.sort((a, b) => b.createdAt - a.createdAt);
-      setPlants(plantData);
-    }, (error) => {
-      console.error("도감 데이터를 불러오는 중 오류 발생:", error);
-    });
+    // React에서 사용할 수 있도록 전역(window) 객체에 등록
+    window.firebaseAuth = getAuth(app);
+    window.firebaseDb = getFirestore(app);
+    window.firebaseMethods = {
+      signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
+      collection, addDoc, onSnapshot, deleteDoc, doc
+    };
 
-    return () => unsubscribe();
-  }, [user]);
+    // Firebase 로딩이 끝나면 React 앱을 실행하도록 이벤트 발생
+    window.dispatchEvent(new Event('firebaseReady'));
+  </script>
 
-  // --- 이미지 압축 함수 (DB 용량 제한을 피하기 위해) ---
-  const compressImage = (file) => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target.result;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 600;
-          const MAX_HEIGHT = 600;
-          let width = img.width;
-          let height = img.height;
+  <!-- 실제 앱 로직 (React) -->
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
 
-          if (width > height && width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          } else if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
+    function App() {
+      // Firebase 도구 가져오기
+      const auth = window.firebaseAuth;
+      const db = window.firebaseDb;
+      const { signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, collection, addDoc, onSnapshot, deleteDoc, doc } = window.firebaseMethods;
+      const appId = "plant-book-84803";
 
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, width, height);
-          
-          // 압축된 데이터 URL 반환 (품질 0.7)
-          resolve(canvas.toDataURL('image/jpeg', 0.7));
-        };
-      };
-    });
-  };
-
-  const handleImageChange = async (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setSelectedImage(URL.createObjectURL(file));
-      setResult(null);
-      setError(null);
-      setSaveSuccess(false);
-
-      // DB 저장용 압축 이미지 생성
-      const compressedDataUrl = await compressImage(file);
-      setCompressedImageUrl(compressedDataUrl);
+      // 앱 기본 상태
+      const [user, setUser] = useState(null);
+      const [currentTab, setCurrentTab] = useState('camera');
       
-      // AI 분석용 순수 base64 추출
-      const base64String = compressedDataUrl.split(',')[1];
-      setImageBase64(base64String);
-    }
-  };
+      // 카메라 및 분석 상태
+      const [selectedImage, setSelectedImage] = useState(null);
+      const [imageBase64, setImageBase64] = useState(null);
+      const [compressedImageUrl, setCompressedImageUrl] = useState(null);
+      const [isAnalyzing, setIsAnalyzing] = useState(false);
+      const [result, setResult] = useState(null);
+      const [error, setError] = useState(null);
+      const fileInputRef = useRef(null);
 
-  const fetchWithRetry = async (url, options, retries = 5) => {
-    const delays = [1000, 2000, 4000, 8000, 16000];
-    for (let i = 0; i < retries; i++) {
-      try {
-        const response = await fetch(url, options);
-        if (!response.ok) throw new Error(`API 오류 (${response.status})`);
-        return await response.json();
-      } catch (err) {
-        if (i === retries - 1) throw err;
-        await new Promise(resolve => setTimeout(resolve, delays[i]));
-      }
-    }
-  };
+      // 도감 저장 상태
+      const [plants, setPlants] = useState([]);
+      const [isSaving, setIsSaving] = useState(false);
+      const [saveSuccess, setSaveSuccess] = useState(false);
+      const [analysisCache, setAnalysisCache] = useState({});
+      const [visibleCount, setVisibleCount] = useState(10);
 
-  const analyzePlant = async () => {
-    if (!imageBase64) return;
-    
-    // 캐싱 처리: 이미 분석한 이미지라면 API를 호출하지 않고 기존 결과 즉시 사용
-    if (analysisCache[imageBase64]) {
-      setResult(analysisCache[imageBase64]);
-      return;
-    }
+      // 간편 로그인 상태
+      const [showLoginModal, setShowLoginModal] = useState(false);
+      const [loginId, setLoginId] = useState('');
+      const [loginPassword, setLoginPassword] = useState('');
+      const [authError, setAuthError] = useState('');
+      const DUMMY_DOMAIN = "@plant.local"; 
 
-    setIsAnalyzing(true);
-    setError(null);
+      // Google Studio API Key
+      const apiKey = "AIzaSyB9K2WbayGieoKNN82MF27UZuQTv4lDUic";
 
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-      const payload = {
-        contents: [{
-          role: "user",
-          parts: [
-            { text: "이 사진 속 식물의 이름이 무엇인지 분석해줘. 응답은 반드시 아래 JSON 형식으로만 작성해야 해: {\"name\": \"식물 이름\", \"description\": \"이 식물에 대한 흥미롭고 쉬운 설명 (초등학생도 이해할 수 있게 2~3문장)\"}" },
-            { inlineData: { mimeType: "image/jpeg", data: imageBase64 } }
-          ]
-        }],
-        generationConfig: { responseMimeType: "application/json" }
+      // Firebase 인증 처리
+      useEffect(() => {
+        const initAuth = async () => {
+          try {
+            await signInAnonymously(auth);
+          } catch (err) {
+            console.error("인증 실패:", err);
+          }
+        };
+        initAuth();
+
+        const unsubscribe = onAuthStateChanged(auth, setUser);
+        return () => unsubscribe();
+      }, []);
+
+      // 내 도감 데이터 불러오기
+      useEffect(() => {
+        if (!user) return;
+        const plantsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'plants');
+        
+        const unsubscribe = onSnapshot(plantsRef, (snapshot) => {
+          const plantData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+          plantData.sort((a, b) => b.createdAt - a.createdAt);
+          setPlants(plantData);
+        }, (err) => {
+          console.error("도감 불러오기 오류:", err);
+        });
+
+        return () => unsubscribe();
+      }, [user]);
+
+      // 회원가입 및 로그인 로직
+      const handleSignUp = async () => {
+        if (!loginId || loginPassword.length < 6) {
+          setAuthError("아이디와 6자리 이상 비밀번호를 입력해주세요.");
+          return;
+        }
+        try {
+          const fakeEmail = `${loginId}${DUMMY_DOMAIN}`;
+          await createUserWithEmailAndPassword(auth, fakeEmail, loginPassword);
+          setShowLoginModal(false);
+          setLoginId('');
+          setLoginPassword('');
+        } catch (err) {
+          if (err.code === 'auth/email-already-in-use') {
+            setAuthError("이미 누군가 사용 중인 아이디입니다.");
+          } else {
+            setAuthError("가입에 실패했습니다. 영문/숫자로 확인해주세요.");
+          }
+        }
       };
 
-      const data = await fetchWithRetry(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      const handleLogin = async () => {
+        if (!loginId || loginPassword.length < 6) {
+          setAuthError("아이디와 6자리 이상 비밀번호를 입력해주세요.");
+          return;
+        }
+        try {
+          const fakeEmail = `${loginId}${DUMMY_DOMAIN}`;
+          await signInWithEmailAndPassword(auth, fakeEmail, loginPassword);
+          setShowLoginModal(false);
+          setLoginId('');
+          setLoginPassword('');
+        } catch (err) {
+          setAuthError("아이디 또는 비밀번호가 틀렸습니다.");
+        }
+      };
 
-      const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (jsonText) {
-        const parsedResult = JSON.parse(jsonText);
-        setResult(parsedResult);
-        // 성공한 분석 결과 캐싱해두기
-        setAnalysisCache(prev => ({ ...prev, [imageBase64]: parsedResult }));
-      } else {
-        throw new Error("분석 결과를 가져오지 못했습니다.");
-      }
-    } catch (err) {
-      setError("앗! 식물을 인식하는 데 문제가 생겼어요. 다시 시도해 주세요.");
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
+      const handleLogout = async () => {
+        try {
+          await signOut(auth);
+          await signInAnonymously(auth);
+        } catch (err) {
+          console.error("로그아웃 실패:", err);
+        }
+      };
 
-  // --- DB에 도감 저장하기 ---
-  const saveToDictionary = async () => {
-    if (!user || !result || !compressedImageUrl) return;
-    setIsSaving(true);
-    try {
-      const plantsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'plants');
-      await addDoc(plantsRef, {
-        name: result.name,
-        description: result.description,
-        imageData: compressedImageUrl,
-        createdAt: Date.now()
-      });
-      setSaveSuccess(true);
-    } catch (err) {
-      setError("도감 저장에 실패했습니다.");
-    } finally {
-      setIsSaving(false);
-    }
-  };
+      // 이미지 처리 로직
+      const compressImage = (file) => {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              const MAX_WIDTH = 600;
+              const MAX_HEIGHT = 600;
+              let width = img.width;
+              let height = img.height;
 
-  // --- DB에서 식물 삭제하기 ---
-  const deletePlant = async (id) => {
-    if (!user) return;
-    try {
-      const plantDoc = doc(db, 'artifacts', appId, 'users', user.uid, 'plants', id);
-      await deleteDoc(plantDoc);
-    } catch (err) {
-      console.error("삭제 실패", err);
-    }
-  };
+              if (width > height && width > MAX_WIDTH) {
+                height *= MAX_WIDTH / width;
+                width = MAX_WIDTH;
+              } else if (height > MAX_HEIGHT) {
+                width *= MAX_HEIGHT / height;
+                height = MAX_HEIGHT;
+              }
 
-  const resetApp = () => {
-    setSelectedImage(null);
-    setImageBase64(null);
-    setCompressedImageUrl(null);
-    setResult(null);
-    setError(null);
-    setSaveSuccess(false);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, width, height);
+              resolve(canvas.toDataURL('image/jpeg', 0.7));
+            };
+          };
+        });
+      };
 
-  return (
-    <div className="min-h-screen bg-[#F4F8F5] text-slate-800 font-sans selection:bg-emerald-200 pb-28">
-      {/* 헤더 바 */}
-      <header className="bg-white/80 backdrop-blur-md shadow-sm px-5 py-3 sticky top-0 z-10 border-b border-slate-100">
-        <div className="max-w-md mx-auto flex items-center justify-between gap-2">
-          {/* 국립장성숲체원 로고 */}
-          <div className="flex items-center">
-            <img 
-              src="국립장성숲체원-_국문좌우_이미지형 (1).png" 
-              alt="국립장성숲체원 로고" 
-              className="h-10 object-contain drop-shadow-sm"
-            />
-          </div>
-          
-          {/* 로그인 / 로그아웃 버튼 */}
-          {user && !user.isAnonymous ? (
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100">
-                {user.email?.split('@')[0]}님
-              </span>
-              <button 
-                onClick={handleLogout}
-                className="flex items-center gap-1.5 text-xs bg-white hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-full font-semibold transition-colors border border-slate-200 shadow-sm"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                로그아웃
-              </button>
-            </div>
-          ) : (
-            <button 
-              onClick={() => { setShowLoginModal(true); setAuthError(''); }}
-              className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-full font-semibold transition-all shadow-md shadow-emerald-600/20"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              로그인
-            </button>
-          )}
-        </div>
-      </header>
+      const handleImageChange = async (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          setSelectedImage(URL.createObjectURL(file));
+          setResult(null);
+          setError(null);
+          setSaveSuccess(false);
 
-      <main className="max-w-md mx-auto p-5 mt-2">
-        {/* 카메라 (식별) 탭 */}
-        {currentTab === 'camera' && (
-          <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {!result && !isAnalyzing && !selectedImage && (
-              <div className="text-center space-y-4 py-6 relative">
-                {/* 관찰포이 캐릭터 */}
-                <div className="relative inline-block">
-                  <div className="absolute inset-0 bg-emerald-300 blur-3xl opacity-20 rounded-full transform scale-150"></div>
-                  <img 
-                    src="01.관찰포이_봄.png" 
-                    alt="관찰하는 포이" 
-                    className="w-40 h-40 mx-auto relative z-10 drop-shadow-xl animate-bounce"
-                    style={{ animationDuration: '3s' }}
-                  />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight">식물을 발견했나요?</h2>
-                  <p className="text-slate-500 mt-1.5 text-sm font-medium">포이와 함께 사진을 찍어 식물을 알아보세요!</p>
-                </div>
+          const compressedDataUrl = await compressImage(file);
+          setCompressedImageUrl(compressedDataUrl);
+          setImageBase64(compressedDataUrl.split(',')[1]);
+        }
+      };
+
+      // API 호출 로직
+      const fetchWithRetry = async (url, options, retries = 5) => {
+        const delays = [1000, 2000, 4000, 8000, 16000];
+        for (let i = 0; i < retries; i++) {
+          try {
+            const response = await fetch(url, options);
+            if (!response.ok) throw new Error(`API 오류 (${response.status})`);
+            return await response.json();
+          } catch (err) {
+            if (i === retries - 1) throw err;
+            await new Promise(resolve => setTimeout(resolve, delays[i]));
+          }
+        }
+      };
+
+      const analyzePlant = async () => {
+        if (!imageBase64) return;
+        
+        if (analysisCache[imageBase64]) {
+          setResult(analysisCache[imageBase64]);
+          return;
+        }
+
+        setIsAnalyzing(true);
+        setError(null);
+
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+          const payload = {
+            contents: [{
+              role: "user",
+              parts: [
+                { text: "이 사진 속 식물의 이름이 무엇인지 분석해줘. 응답은 반드시 아래 JSON 형식으로만 작성해야 해: {\"name\": \"식물 이름\", \"description\": \"이 식물에 대한 흥미롭고 쉬운 설명 (초등학생도 이해할 수 있게 2~3문장)\"}" },
+                { inlineData: { mimeType: "image/jpeg", data: imageBase64 } }
+              ]
+            }],
+            generationConfig: { responseMimeType: "application/json" }
+          };
+
+          const data = await fetchWithRetry(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (jsonText) {
+            const parsedResult = JSON.parse(jsonText);
+            setResult(parsedResult);
+            setAnalysisCache(prev => ({ ...prev, [imageBase64]: parsedResult }));
+          } else {
+            throw new Error("분석 결과를 가져오지 못했습니다.");
+          }
+        } catch (err) {
+          setError("앗! 식물을 인식하는 데 문제가 생겼어요. 다시 시도해 주세요.");
+        } finally {
+          setIsAnalyzing(false);
+        }
+      };
+
+      const saveToDictionary = async () => {
+        if (!user || !result || !compressedImageUrl) return;
+        setIsSaving(true);
+        try {
+          const plantsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'plants');
+          await addDoc(plantsRef, {
+            name: result.name,
+            description: result.description,
+            imageData: compressedImageUrl,
+            createdAt: Date.now()
+          });
+          setSaveSuccess(true);
+        } catch (err) {
+          setError("도감 저장에 실패했습니다.");
+        } finally {
+          setIsSaving(false);
+        }
+      };
+
+      const deletePlant = async (id) => {
+        if (!user) return;
+        try {
+          const plantDoc = doc(db, 'artifacts', appId, 'users', user.uid, 'plants', id);
+          await deleteDoc(plantDoc);
+        } catch (err) {
+          console.error("삭제 실패", err);
+        }
+      };
+
+      const resetApp = () => {
+        setSelectedImage(null);
+        setImageBase64(null);
+        setCompressedImageUrl(null);
+        setResult(null);
+        setError(null);
+        setSaveSuccess(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      };
+
+      return (
+        <div className="min-h-screen bg-[#F4F8F5] text-slate-800 font-sans selection:bg-emerald-200 pb-28">
+          <header className="bg-white/80 backdrop-blur-md shadow-sm px-5 py-3 sticky top-0 z-10 border-b border-slate-100">
+            <div className="max-w-md mx-auto flex items-center justify-between gap-2">
+              <div className="flex items-center">
+                <img src="국립장성숲체원-_국문좌우_이미지형 (1).png" alt="국립장성숲체원 로고" className="h-10 object-contain drop-shadow-sm" />
               </div>
-            )}
-
-            {error && (
-              <div className="bg-red-50 text-red-600 p-4 rounded-2xl flex items-start gap-3 border border-red-100 shadow-sm">
-                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                <p className="text-sm font-medium leading-relaxed">{error}</p>
-              </div>
-            )}
-
-            <div className="bg-white p-2.5 rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
-              {!selectedImage ? (
-                <div 
-                  onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-emerald-200 bg-emerald-50/30 rounded-[1.5rem] h-80 flex flex-col items-center justify-center gap-5 cursor-pointer hover:bg-emerald-50 active:scale-[0.98] transition-all group"
-                >
-                  <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm text-emerald-500 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300">
-                    <Camera className="w-8 h-8" />
-                  </div>
-                  <div className="text-center">
-                    <span className="block text-lg font-bold text-emerald-900 mb-1">카메라 켜기 / 앨범 선택</span>
-                    <span className="text-sm text-emerald-600/70 font-medium">여기를 가볍게 터치하세요</span>
-                  </div>
+              
+              {user && !user.isAnonymous ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100">
+                    {user.email?.split('@')[0]}님
+                  </span>
+                  <button onClick={handleLogout} className="flex items-center gap-1.5 text-xs bg-white hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-full font-semibold transition-colors border border-slate-200 shadow-sm">
+                    <i class="ph ph-sign-out text-sm"></i> 로그아웃
+                  </button>
                 </div>
               ) : (
-                <div className="relative rounded-[1.5rem] overflow-hidden shadow-inner">
-                  <img src={selectedImage} alt="Selected Plant" className="w-full h-80 object-cover" />
-                  {isAnalyzing && (
-                    <div className="absolute inset-0 bg-white/80 backdrop-blur-md flex flex-col items-center justify-center gap-4">
-                      <Loader2 className="w-12 h-12 text-emerald-600 animate-spin" />
-                      <p className="text-lg font-bold text-emerald-800 animate-pulse">포이가 열심히 찾고 있어요...</p>
-                    </div>
-                  )}
-                </div>
+                <button onClick={() => { setShowLoginModal(true); setAuthError(''); }} className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-full font-semibold transition-all shadow-md shadow-emerald-600/20">
+                  <i class="ph ph-sign-in text-sm"></i> 로그인
+                </button>
               )}
-              <input 
-                type="file" accept="image/*" capture="environment" 
-                onChange={handleImageChange} ref={fileInputRef} className="hidden"
-              />
             </div>
+          </header>
 
-            {selectedImage && !result && !isAnalyzing && (
-              <div className="flex gap-3">
-                <button onClick={resetApp} className="flex-1 py-4 bg-white border border-slate-200 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 active:bg-slate-100 shadow-sm transition-all">
-                  다시 찍기
-                </button>
-                <button onClick={analyzePlant} className="flex-[2] py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 active:bg-emerald-800 shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all">
-                  <Leaf className="w-5 h-5" /> 이름 확인하기
-                </button>
-              </div>
-            )}
-
-            {result && (
-              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-4">
-                <div className="bg-white p-7 rounded-[2rem] shadow-sm border border-emerald-100 space-y-4 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-bl-full -z-10 opacity-60"></div>
-                  
-                  <div className="inline-block px-3.5 py-1.5 bg-emerald-100 text-emerald-800 text-xs font-black rounded-full mb-2 tracking-wide">
-                    인식 완료 ✨
+          <main className="max-w-md mx-auto p-5 mt-2">
+            {currentTab === 'camera' && (
+              <div className="flex flex-col gap-6 animate-in fade-in duration-500">
+                {!result && !isAnalyzing && !selectedImage && (
+                  <div className="text-center space-y-4 py-6 relative">
+                    <div className="relative inline-block">
+                      <div className="absolute inset-0 bg-emerald-300 blur-3xl opacity-20 rounded-full transform scale-150"></div>
+                      <img src="01.관찰포이_봄.png" alt="관찰하는 포이" className="w-40 h-40 mx-auto relative z-10 drop-shadow-xl animate-bounce" style={{ animationDuration: '3s' }} />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight">식물을 발견했나요?</h2>
+                      <p className="text-slate-500 mt-1.5 text-sm font-medium">포이와 함께 사진을 찍어 식물을 알아보세요!</p>
+                    </div>
                   </div>
-                  <h3 className="text-3xl font-black text-slate-800 break-keep leading-tight">{result.name}</h3>
-                  <p className="text-slate-600 leading-relaxed text-lg break-keep font-medium">{result.description}</p>
-                </div>
+                )}
 
-                <div className="flex gap-3">
-                  <button onClick={resetApp} className="flex-1 py-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-50 shadow-sm transition-all">
-                    <RefreshCw className="w-5 h-5" /> 다시
-                  </button>
-                  
-                  {saveSuccess ? (
-                    <button disabled className="flex-[2] py-4 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-2xl flex items-center justify-center gap-2">
-                      <CheckCircle2 className="w-5 h-5" /> 도감 저장 완료
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={saveToDictionary} 
-                      disabled={isSaving}
-                      className="flex-[2] py-4 bg-slate-800 text-white font-bold rounded-2xl hover:bg-slate-900 active:bg-black shadow-lg shadow-slate-800/20 flex items-center justify-center gap-2 disabled:opacity-70 transition-all"
-                    >
-                      {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                      내 도감에 저장하기
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+                {error && (
+                  <div className="bg-red-50 text-red-600 p-4 rounded-2xl flex items-start gap-3 border border-red-100 shadow-sm">
+                    <i class="ph ph-warning-circle text-xl shrink-0 mt-0.5"></i>
+                    <p className="text-sm font-medium leading-relaxed">{error}</p>
+                  </div>
+                )}
 
-        {/* 내 도감 탭 */}
-        {currentTab === 'dictionary' && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2.5">
-                <BookOpen className="w-7 h-7 text-emerald-600" />
-                나의 식물 기록
-              </h2>
-              <span className="text-sm bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full font-bold shadow-sm">
-                총 {plants.length}개
-              </span>
-            </div>
-
-            {plants.length === 0 ? (
-              <div className="text-center py-20 bg-white rounded-[2rem] border border-dashed border-emerald-200 shadow-sm relative overflow-hidden">
-                <div className="absolute inset-0 bg-emerald-50/30"></div>
-                <img 
-                  src="01.관찰포이_봄.png" 
-                  alt="관찰하는 포이" 
-                  className="w-32 h-32 mx-auto relative z-10 drop-shadow-md opacity-80 mb-4"
-                />
-                <p className="text-slate-700 font-bold text-lg relative z-10">아직 수집한 식물이 없어요.</p>
-                <p className="text-slate-500 text-sm mt-1.5 font-medium relative z-10">포이와 함께 카메라로 도감을 채워보세요!</p>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  {plants.slice(0, visibleCount).map((plant) => (
-                    <div key={plant.id} className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex flex-col relative group hover:shadow-md transition-shadow">
-                      <div className="relative h-36">
-                        <img 
-                          src={plant.imageData} 
-                          alt={plant.name} 
-                          className="w-full h-full object-cover bg-slate-100"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                        <button 
-                          onClick={() => deletePlant(plant.id)}
-                          className="absolute top-2 right-2 p-2 bg-black/30 backdrop-blur-md text-white rounded-full hover:bg-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                <div className="bg-white p-2.5 rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
+                  {!selectedImage ? (
+                    <div onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-emerald-200 bg-emerald-50/30 rounded-[1.5rem] h-80 flex flex-col items-center justify-center gap-5 cursor-pointer hover:bg-emerald-50 active:scale-[0.98] transition-all group">
+                      <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm text-emerald-500 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300">
+                        <i class="ph ph-camera text-3xl"></i>
                       </div>
-                      <div className="p-4 flex-1 flex flex-col">
-                        <h4 className="font-extrabold text-slate-800 text-sm truncate">{plant.name}</h4>
-                        <p className="text-[11px] font-semibold text-slate-400 mt-1">
-                          {new Date(plant.createdAt).toLocaleDateString()}
-                        </p>
+                      <div className="text-center">
+                        <span className="block text-lg font-bold text-emerald-900 mb-1">카메라 켜기 / 앨범 선택</span>
+                        <span className="text-sm text-emerald-600/70 font-medium">여기를 가볍게 터치하세요</span>
                       </div>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="relative rounded-[1.5rem] overflow-hidden shadow-inner">
+                      <img src={selectedImage} alt="Selected Plant" className="w-full h-80 object-cover" />
+                      {isAnalyzing && (
+                        <div className="absolute inset-0 bg-white/80 backdrop-blur-md flex flex-col items-center justify-center gap-4">
+                          <i class="ph ph-spinner animate-spin text-5xl text-emerald-600"></i>
+                          <p className="text-lg font-bold text-emerald-800 animate-pulse">포이가 열심히 찾고 있어요...</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} ref={fileInputRef} className="hidden" />
                 </div>
 
-                {/* 더 보기 버튼 */}
-                {plants.length > visibleCount && (
-                  <button 
-                    onClick={() => setVisibleCount(prev => prev + 10)}
-                    className="w-full py-3.5 bg-white border border-emerald-200 text-emerald-700 font-bold rounded-2xl hover:bg-emerald-50 transition-colors shadow-sm flex items-center justify-center gap-2"
-                  >
-                    더 보기 ({visibleCount} / {plants.length})
-                  </button>
+                {selectedImage && !result && !isAnalyzing && (
+                  <div className="flex gap-3">
+                    <button onClick={resetApp} className="flex-1 py-4 bg-white border border-slate-200 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 active:bg-slate-100 shadow-sm transition-all">
+                      다시 찍기
+                    </button>
+                    <button onClick={analyzePlant} className="flex-[2] py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 active:bg-emerald-800 shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all">
+                      <i class="ph ph-leaf text-xl"></i> 이름 확인하기
+                    </button>
+                  </div>
+                )}
+
+                {result && (
+                  <div className="animate-in fade-in space-y-4">
+                    <div className="bg-white p-7 rounded-[2rem] shadow-sm border border-emerald-100 space-y-4 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-bl-full -z-10 opacity-60"></div>
+                      <div className="inline-block px-3.5 py-1.5 bg-emerald-100 text-emerald-800 text-xs font-black rounded-full mb-2 tracking-wide">
+                        인식 완료 ✨
+                      </div>
+                      <h3 className="text-3xl font-black text-slate-800 break-keep leading-tight">{result.name}</h3>
+                      <p className="text-slate-600 leading-relaxed text-lg break-keep font-medium">{result.description}</p>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <button onClick={resetApp} className="flex-1 py-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-50 shadow-sm transition-all">
+                        <i class="ph ph-arrows-clockwise text-xl"></i> 다시
+                      </button>
+                      {saveSuccess ? (
+                        <button disabled className="flex-[2] py-4 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-2xl flex items-center justify-center gap-2">
+                          <i class="ph ph-check-circle text-xl"></i> 도감 저장 완료
+                        </button>
+                      ) : (
+                        <button onClick={saveToDictionary} disabled={isSaving} className="flex-[2] py-4 bg-slate-800 text-white font-bold rounded-2xl hover:bg-slate-900 active:bg-black shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 transition-all">
+                          {isSaving ? <i class="ph ph-spinner animate-spin text-xl"></i> : <i class="ph ph-floppy-disk text-xl"></i>}
+                          내 도감에 저장하기
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
-          </div>
-        )}
-      </main>
 
-      {/* 하단 네비게이션 탭 바 */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-t border-slate-200 pb-safe z-20">
-        <div className="max-w-md mx-auto flex">
-          <button 
-            onClick={() => setCurrentTab('camera')}
-            className={`flex-1 py-4 flex flex-col items-center gap-1.5 transition-colors relative ${currentTab === 'camera' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-600'}`}
-          >
-            {currentTab === 'camera' && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-1 bg-emerald-500 rounded-b-full"></div>}
-            <Camera className={`w-6 h-6 ${currentTab === 'camera' ? 'fill-emerald-50' : ''}`} />
-            <span className="text-[11px] font-bold tracking-wide">사진 찍기</span>
-          </button>
-          <button 
-            onClick={() => { setCurrentTab('dictionary'); resetApp(); }}
-            className={`flex-1 py-4 flex flex-col items-center gap-1.5 transition-colors relative ${currentTab === 'dictionary' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-600'}`}
-          >
-            {currentTab === 'dictionary' && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-1 bg-emerald-500 rounded-b-full"></div>}
-            <BookOpen className={`w-6 h-6 ${currentTab === 'dictionary' ? 'fill-emerald-50' : ''}`} />
-            <span className="text-[11px] font-bold tracking-wide">내 도감</span>
-          </button>
-        </div>
-      </nav>
+            {currentTab === 'dictionary' && (
+              <div className="animate-in fade-in duration-300">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2.5">
+                    <i class="ph ph-book-open text-3xl text-emerald-600"></i> 나의 식물 기록
+                  </h2>
+                  <span className="text-sm bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full font-bold shadow-sm">
+                    총 {plants.length}개
+                  </span>
+                </div>
 
-      {/* 로그인 / 가입 모달 */}
-      {showLoginModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-5">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-sm p-7 space-y-6 shadow-2xl animate-in zoom-in-95 duration-200 border border-slate-100">
-            <div className="text-center">
-              <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner">
-                <Leaf className="w-7 h-7" />
-              </div>
-              <h3 className="text-2xl font-black text-slate-800 tracking-tight">도감 시작하기</h3>
-              <p className="text-sm text-slate-500 mt-2 font-medium break-keep">이메일 없이 아이디와 비밀번호만으로 간편하게 도감을 보관하세요!</p>
-            </div>
+                {plants.length === 0 ? (
+                  <div className="text-center py-20 bg-white rounded-[2rem] border border-dashed border-emerald-200 shadow-sm relative overflow-hidden">
+                    <div className="absolute inset-0 bg-emerald-50/30"></div>
+                    <img src="01.관찰포이_봄.png" alt="관찰하는 포이" className="w-32 h-32 mx-auto relative z-10 drop-shadow-md opacity-80 mb-4" />
+                    <p className="text-slate-700 font-bold text-lg relative z-10">아직 수집한 식물이 없어요.</p>
+                    <p className="text-slate-500 text-sm mt-1.5 font-medium relative z-10">포이와 함께 카메라로 도감을 채워보세요!</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-2 gap-4">
+                      {plants.slice(0, visibleCount).map((plant) => (
+                        <div key={plant.id} className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex flex-col relative group hover:shadow-md transition-shadow">
+                          <div className="relative h-36">
+                            <img src={plant.imageData} alt={plant.name} className="w-full h-full object-cover bg-slate-100" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                            <button onClick={() => deletePlant(plant.id)} className="absolute top-2 right-2 p-2 bg-black/30 backdrop-blur-md text-white rounded-full hover:bg-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                              <i class="ph ph-trash text-base"></i>
+                            </button>
+                          </div>
+                          <div className="p-4 flex-1 flex flex-col">
+                            <h4 className="font-extrabold text-slate-800 text-sm truncate">{plant.name}</h4>
+                            <p className="text-[11px] font-semibold text-slate-400 mt-1">
+                              {new Date(plant.createdAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
 
-            <div className="space-y-3.5">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-600 pl-1">아이디</label>
-                <input 
-                  type="text" 
-                  placeholder="영문, 숫자 입력" 
-                  value={loginId}
-                  onChange={(e) => setLoginId(e.target.value)}
-                  className="w-full px-5 py-3.5 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-slate-50 font-medium transition-all"
-                />
+                    {plants.length > visibleCount && (
+                      <button onClick={() => setVisibleCount(p => p + 10)} className="w-full py-3.5 bg-white border border-emerald-200 text-emerald-700 font-bold rounded-2xl hover:bg-emerald-50 transition-colors shadow-sm">
+                        더 보기 ({visibleCount} / {plants.length})
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-600 pl-1">비밀번호</label>
-                <input 
-                  type="password" 
-                  placeholder="6자리 이상 입력" 
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  className="w-full px-5 py-3.5 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-slate-50 font-medium transition-all"
-                />
-              </div>
-              {authError && <p className="text-red-500 text-xs px-2 font-bold animate-pulse">{authError}</p>}
-            </div>
+            )}
+          </main>
 
-            <div className="flex flex-col gap-2.5 pt-2">
-              <div className="flex gap-2.5">
-                <button 
-                  onClick={handleSignUp}
-                  className="flex-1 py-3.5 bg-emerald-50 text-emerald-700 font-black rounded-2xl hover:bg-emerald-100 transition-colors border border-emerald-100"
-                >
-                  새로 가입
-                </button>
-                <button 
-                  onClick={handleLogin}
-                  className="flex-1 py-3.5 bg-emerald-600 text-white font-black rounded-2xl hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-600/30"
-                >
-                  로그인
-                </button>
-              </div>
-              <button 
-                onClick={() => setShowLoginModal(false)}
-                className="w-full py-3.5 bg-white text-slate-400 font-bold rounded-2xl hover:text-slate-600 hover:bg-slate-50 transition-colors"
-              >
-                닫기
+          <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-t border-slate-200 pb-safe z-20">
+            <div className="max-w-md mx-auto flex">
+              <button onClick={() => setCurrentTab('camera')} className={`flex-1 py-4 flex flex-col items-center gap-1.5 transition-colors relative ${currentTab === 'camera' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                {currentTab === 'camera' && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-1 bg-emerald-500 rounded-b-full"></div>}
+                <i class={`ph ph-camera text-2xl ${currentTab === 'camera' ? 'fill-emerald-50' : ''}`}></i>
+                <span className="text-[11px] font-bold tracking-wide">사진 찍기</span>
+              </button>
+              <button onClick={() => { setCurrentTab('dictionary'); resetApp(); }} className={`flex-1 py-4 flex flex-col items-center gap-1.5 transition-colors relative ${currentTab === 'dictionary' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                {currentTab === 'dictionary' && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-1 bg-emerald-500 rounded-b-full"></div>}
+                <i class={`ph ph-book-open text-2xl ${currentTab === 'dictionary' ? 'fill-emerald-50' : ''}`}></i>
+                <span className="text-[11px] font-bold tracking-wide">내 도감</span>
               </button>
             </div>
-          </div>
+          </nav>
+
+          {showLoginModal && (
+            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-5">
+              <div className="bg-white rounded-[2.5rem] w-full max-w-sm p-7 space-y-6 shadow-2xl">
+                <div className="text-center">
+                  <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner">
+                    <i class="ph ph-leaf text-3xl"></i>
+                  </div>
+                  <h3 className="text-2xl font-black text-slate-800 tracking-tight">도감 시작하기</h3>
+                  <p className="text-sm text-slate-500 mt-2 font-medium break-keep">이메일 없이 아이디와 비밀번호만으로 간편하게 도감을 보관하세요!</p>
+                </div>
+
+                <div className="space-y-3.5">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-600 pl-1">아이디</label>
+                    <input type="text" placeholder="영문, 숫자 입력" value={loginId} onChange={(e) => setLoginId(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-slate-50 font-medium transition-all" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-600 pl-1">비밀번호</label>
+                    <input type="password" placeholder="6자리 이상 입력" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-slate-50 font-medium transition-all" />
+                  </div>
+                  {authError && <p className="text-red-500 text-xs px-2 font-bold animate-pulse">{authError}</p>}
+                </div>
+
+                <div className="flex flex-col gap-2.5 pt-2">
+                  <div className="flex gap-2.5">
+                    <button onClick={handleSignUp} className="flex-1 py-3.5 bg-emerald-50 text-emerald-700 font-black rounded-2xl hover:bg-emerald-100 transition-colors border border-emerald-100">새로 가입</button>
+                    <button onClick={handleLogin} className="flex-1 py-3.5 bg-emerald-600 text-white font-black rounded-2xl hover:bg-emerald-700 transition-colors shadow-lg">로그인</button>
+                  </div>
+                  <button onClick={() => setShowLoginModal(false)} className="w-full py-3.5 bg-white text-slate-400 font-bold rounded-2xl hover:text-slate-600 hover:bg-slate-50 transition-colors">닫기</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      )}
-    </div>
-  );
-}
+      );
+    }
+
+    // Firebase 로딩이 완료되면 React를 화면에 그립니다.
+    window.addEventListener('firebaseReady', () => {
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App />);
+    });
+  </script>
+</body>
+</html>
