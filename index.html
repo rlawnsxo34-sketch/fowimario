@@ -5,41 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>방장산 식물 도감</title>
   
-  <!-- Tailwind CSS (디자인) -->
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- Phosphor Icons (아이콘) -->
+  <!-- Phosphor Icons -->
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
   
-  <!-- React & ReactDOM (UI 라이브러리) -->
+  <!-- React & ReactDOM -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   
-  <!-- Babel (JSX를 브라우저가 읽을 수 있게 변환) -->
+  <!-- Babel -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <style>
-    /* iOS 안전 영역 대응 및 기본 설정 */
     body { -webkit-tap-highlight-color: transparent; }
     .pb-safe { padding-bottom: env(safe-area-inset-bottom, 20px); }
   </style>
 </head>
 <body class="bg-[#F4F8F5]">
   <div id="root">
-    <!-- 초기 로딩 화면 -->
     <div class="min-h-screen flex flex-col items-center justify-center text-emerald-600 gap-4">
       <i class="ph ph-spinner animate-spin text-5xl"></i>
       <p class="font-bold">도감을 준비하고 있어요...</p>
     </div>
   </div>
 
-  <!-- Firebase 연동 설정 (모듈) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
     import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
     import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-    // 전달해주신 Firebase 설정값
     const firebaseConfig = {
       apiKey: "AIzaSyCZjnNVl9MkH2nqQ9O0vhKibiwGl-0ysRU",
       authDomain: "plant-book-84803.firebaseapp.com",
@@ -50,146 +46,94 @@
       measurementId: "G-ZYMY9HW5CT"
     };
 
-    // Firebase 초기화
     const app = initializeApp(firebaseConfig);
-    
-    // React에서 사용할 수 있도록 전역(window) 객체에 등록
     window.firebaseAuth = getAuth(app);
     window.firebaseDb = getFirestore(app);
     window.firebaseMethods = {
       signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
       collection, addDoc, onSnapshot, deleteDoc, doc
     };
-
-    // Firebase 로딩이 끝나면 React 앱을 실행하도록 이벤트 발생
     window.dispatchEvent(new Event('firebaseReady'));
   </script>
 
-  <!-- 실제 앱 로직 (React) -->
   <script type="text/babel">
     const { useState, useRef, useEffect } = React;
 
     function App() {
-      // Firebase 도구 가져오기
       const auth = window.firebaseAuth;
       const db = window.firebaseDb;
       const { signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, collection, addDoc, onSnapshot, deleteDoc, doc } = window.firebaseMethods;
       const appId = "plant-book-84803";
 
-      // 앱 기본 상태
       const [user, setUser] = useState(null);
       const [currentTab, setCurrentTab] = useState('camera');
       
-      // 카메라 및 분석 상태
       const [selectedImage, setSelectedImage] = useState(null);
-      const [imageBase64, setImageBase64] = useState(null);
+      const [selectedFile, setSelectedFile] = useState(null);
       const [compressedImageUrl, setCompressedImageUrl] = useState(null);
       const [isAnalyzing, setIsAnalyzing] = useState(false);
       const [result, setResult] = useState(null);
       const [error, setError] = useState(null);
       
-      // 카메라용과 앨범용 입력 장치를 분리
       const cameraInputRef = useRef(null);
       const albumInputRef = useRef(null);
 
-      // 도감 저장 상태
       const [plants, setPlants] = useState([]);
       const [isSaving, setIsSaving] = useState(false);
       const [saveSuccess, setSaveSuccess] = useState(false);
-      const [analysisCache, setAnalysisCache] = useState({});
       const [visibleCount, setVisibleCount] = useState(10);
 
-      // 간편 로그인 상태
       const [showLoginModal, setShowLoginModal] = useState(false);
       const [loginId, setLoginId] = useState('');
       const [loginPassword, setLoginPassword] = useState('');
       const [authError, setAuthError] = useState('');
       const DUMMY_DOMAIN = "@plant.local"; 
-
-      // 추가 기능 상태: 사진 가져오기 방식 선택 모달
       const [showImageSourceModal, setShowImageSourceModal] = useState(false);
 
-      // Google Studio API Key
-      const apiKey = "AIzaSyAdOcPUvgX0YGiNVLRCcurlTUuQ379p-wo";
+      // 🌟 전달해주신 식물 전용 플랜트넷 API 키 적용 완료
+      const plantNetApiKey = "2b10Xd7k9obw7ZFJzVTET8O";
 
-      // Firebase 인증 처리
       useEffect(() => {
         const initAuth = async () => {
-          try {
-            await signInAnonymously(auth);
-          } catch (err) {
-            console.error("인증 실패:", err);
-          }
+          try { await signInAnonymously(auth); } catch (err) { console.error("인증 실패:", err); }
         };
         initAuth();
-
         const unsubscribe = onAuthStateChanged(auth, setUser);
         return () => unsubscribe();
       }, []);
 
-      // 내 도감 데이터 불러오기
       useEffect(() => {
         if (!user) return;
         const plantsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'plants');
-        
         const unsubscribe = onSnapshot(plantsRef, (snapshot) => {
           const plantData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
           plantData.sort((a, b) => b.createdAt - a.createdAt);
           setPlants(plantData);
-        }, (err) => {
-          console.error("도감 불러오기 오류:", err);
-        });
-
+        }, (err) => { console.error("도감 불러오기 오류:", err); });
         return () => unsubscribe();
       }, [user]);
 
-      // 회원가입 및 로그인 로직
       const handleSignUp = async () => {
-        if (!loginId || loginPassword.length < 6) {
-          setAuthError("아이디와 6자리 이상 비밀번호를 입력해주세요.");
-          return;
-        }
+        if (!loginId || loginPassword.length < 6) return setAuthError("아이디와 6자리 이상 비밀번호를 입력해주세요.");
         try {
           const fakeEmail = `${loginId}${DUMMY_DOMAIN}`;
           await createUserWithEmailAndPassword(auth, fakeEmail, loginPassword);
-          setShowLoginModal(false);
-          setLoginId('');
-          setLoginPassword('');
-        } catch (err) {
-          if (err.code === 'auth/email-already-in-use') {
-            setAuthError("이미 누군가 사용 중인 아이디입니다.");
-          } else {
-            setAuthError("가입에 실패했습니다. 영문/숫자로 확인해주세요.");
-          }
-        }
+          setShowLoginModal(false); setLoginId(''); setLoginPassword('');
+        } catch (err) { setAuthError("가입에 실패했습니다."); }
       };
 
       const handleLogin = async () => {
-        if (!loginId || loginPassword.length < 6) {
-          setAuthError("아이디와 6자리 이상 비밀번호를 입력해주세요.");
-          return;
-        }
+        if (!loginId || loginPassword.length < 6) return setAuthError("입력을 확인해주세요.");
         try {
-          const fakeEmail = `${loginId}${DUMMY_DOMAIN}`;
-          await signInWithEmailAndPassword(auth, fakeEmail, loginPassword);
-          setShowLoginModal(false);
-          setLoginId('');
-          setLoginPassword('');
-        } catch (err) {
-          setAuthError("아이디 또는 비밀번호가 틀렸습니다.");
-        }
+          await signInWithEmailAndPassword(auth, `${loginId}${DUMMY_DOMAIN}`, loginPassword);
+          setShowLoginModal(false); setLoginId(''); setLoginPassword('');
+        } catch (err) { setAuthError("정보가 틀렸습니다."); }
       };
 
       const handleLogout = async () => {
-        try {
-          await signOut(auth);
-          await signInAnonymously(auth);
-        } catch (err) {
-          console.error("로그아웃 실패:", err);
-        }
+        try { await signOut(auth); await signInAnonymously(auth); } catch (err) {}
       };
 
-      // 이미지 처리 로직
       const compressImage = (file) => {
         return new Promise((resolve) => {
           const reader = new FileReader();
@@ -199,21 +143,10 @@
             img.src = event.target.result;
             img.onload = () => {
               const canvas = document.createElement('canvas');
-              const MAX_WIDTH = 600;
-              const MAX_HEIGHT = 600;
-              let width = img.width;
-              let height = img.height;
-
-              if (width > height && width > MAX_WIDTH) {
-                height *= MAX_WIDTH / width;
-                width = MAX_WIDTH;
-              } else if (height > MAX_HEIGHT) {
-                width *= MAX_HEIGHT / height;
-                height = MAX_HEIGHT;
-              }
-
-              canvas.width = width;
-              canvas.height = height;
+              let { width, height } = img;
+              if (width > height && width > 600) { height *= 600 / width; width = 600; } 
+              else if (height > 600) { width *= 600 / height; height = 600; }
+              canvas.width = width; canvas.height = height;
               const ctx = canvas.getContext('2d');
               ctx.drawImage(img, 0, 0, width, height);
               resolve(canvas.toDataURL('image/jpeg', 0.7));
@@ -225,102 +158,73 @@
       const handleImageChange = async (e) => {
         const file = e.target.files[0];
         if (file) {
-          setSelectedImage(URL.createObjectURL(file));
-          setResult(null);
-          setError(null);
-          setSaveSuccess(false);
+          // 안정성 점검 1: 기존 메모리에 남은 미리보기 이미지가 있으면 찌꺼기 제거 (메모리 누수 방지)
+          if (selectedImage) URL.revokeObjectURL(selectedImage);
 
+          setSelectedFile(file);
+          setSelectedImage(URL.createObjectURL(file));
+          setResult(null); setError(null); setSaveSuccess(false);
           const compressedDataUrl = await compressImage(file);
           setCompressedImageUrl(compressedDataUrl);
-          setImageBase64(compressedDataUrl.split(',')[1]);
         }
       };
 
-      // API 호출 로직 (에러 발생 시 즉각 중단하도록 수정)
-      const fetchWithRetry = async (url, options, retries = 5) => {
-        const delays = [1000, 2000, 4000, 8000, 16000];
-        for (let i = 0; i < retries; i++) {
-          try {
-            const response = await fetch(url, options);
-            if (!response.ok) {
-              const errText = await response.text();
-              throw new Error(`API 오류 (${response.status}): ${errText}`);
-            }
-            return await response.json();
-          } catch (err) {
-            // 404 에러(모델 없음/차단)는 재시도해도 의미가 없으므로 즉시 에러를 던져 우회 로직으로 넘김
-            if (err.message.includes('404')) throw err;
-            if (i === retries - 1) throw err;
-            await new Promise(resolve => setTimeout(resolve, delays[i]));
-          }
-        }
-      };
-
+      // 💡 플랜트넷 API 식물 분석 기능
       const analyzePlant = async () => {
-        if (!imageBase64) return;
-        
-        if (analysisCache[imageBase64]) {
-          setResult(analysisCache[imageBase64]);
-          return;
-        }
+        if (!selectedFile || isAnalyzing) return; // 다중 클릭 방지 (안정성 점검 3)
 
         setIsAnalyzing(true);
         setError(null);
 
         try {
-          const payload = {
-            contents: [{
-              role: "user",
-              parts: [
-                { text: "이 사진 속 식물의 이름이 무엇인지 분석해줘. 응답은 반드시 아래 JSON 형식으로만 작성해야 해: {\"name\": \"식물 이름\", \"description\": \"이 식물에 대한 흥미롭고 쉬운 설명 (초등학생도 이해할 수 있게 2~3문장)\"}" },
-                { inlineData: { mimeType: "image/jpeg", data: imageBase64 } }
-              ]
-            }],
-            generationConfig: { responseMimeType: "application/json" }
-          };
+          const formData = new FormData();
+          formData.append('images', selectedFile);
+          formData.append('organs', 'auto'); 
 
-          const options = {
+          const url = `https://my-api.plantnet.org/v2/identify/all?api-key=${plantNetApiKey}&lang=ko`;
+
+          const response = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          };
+            body: formData
+          });
 
-          let data;
-          try {
-            // 1. 외부 배포용 (GitHub Pages 등) 정식 모델 시도
-            const mainUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-            data = await fetchWithRetry(mainUrl, options);
-          } catch (apiErr) {
-            // 2. 우측 미리보기 환경(Canvas)에서 404 차단 발생 시 내부 전용 모델로 자동 우회
-            if (apiErr.message.includes('404')) {
-              console.warn("미리보기 환경 제한 감지됨. 대체 모델로 우회합니다.");
-              const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-              data = await fetchWithRetry(fallbackUrl, options);
-            } else {
-              throw apiErr;
+          if (!response.ok) {
+            // 안정성 점검 2: 식물이 아닌 사진(사람, 동물 등)을 올렸을 때 나오는 404 에러를 친절하게 안내
+            if (response.status === 404) {
+              throw new Error("사진에서 식물을 찾지 못했어요. 식물 잎이나 꽃이 잘 보이게 다시 찍어주세요!");
+            } else if (response.status === 401 || response.status === 403) {
+              throw new Error("서버 접속 권한이 없습니다. (API 키 오류)");
             }
+            throw new Error(`(${response.status}) 일시적인 서버 통신 오류가 발생했어요.`);
           }
 
-          let jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (jsonText) {
-            // AI가 간혹 마크다운 기호를 붙여주는 경우를 대비해 텍스트 정제
-            jsonText = jsonText.replace(/```json/gi, '').replace(/```/gi, '').trim();
-            const parsedResult = JSON.parse(jsonText);
-            setResult(parsedResult);
-            setAnalysisCache(prev => ({ ...prev, [imageBase64]: parsedResult }));
+          const data = await response.json();
+
+          if (data && data.results && data.results.length > 0) {
+            const bestMatch = data.results[0];
+            const accuracy = Math.round(bestMatch.score * 100);
+            
+            const plantName = (bestMatch.species.commonNames && bestMatch.species.commonNames.length > 0) 
+                              ? bestMatch.species.commonNames[0] 
+                              : bestMatch.species.scientificNameWithoutAuthor;
+
+            setResult({
+              name: plantName,
+              description: `이 식물은 약 ${accuracy}% 확률로 '${plantName}'입니다! 포이와 함께 도감에 보관해 볼까요?`
+            });
           } else {
-            throw new Error("분석 결과를 가져오지 못했습니다.");
+            throw new Error("어떤 식물인지 정확히 찾지 못했어요.");
           }
         } catch (err) {
-          console.error("Analysis Error:", err); // 에러 내용 확인용 로그
-          setError("앗! 식물을 인식하는 데 문제가 생겼어요. 다시 시도해 주세요.");
+          console.error("PlantNet Error:", err); 
+          setError(`분석 실패: ${err.message}`);
         } finally {
           setIsAnalyzing(false);
         }
       };
 
       const saveToDictionary = async () => {
-        if (!user || !result || !compressedImageUrl) return;
+        if (!user || !result || !compressedImageUrl || isSaving) return; // 다중 클릭 방지
         setIsSaving(true);
         try {
           const plantsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'plants');
@@ -331,32 +235,26 @@
             createdAt: Date.now()
           });
           setSaveSuccess(true);
-        } catch (err) {
-          setError("도감 저장에 실패했습니다.");
-        } finally {
-          setIsSaving(false);
-        }
+        } catch (err) { setError("저장 실패"); } finally { setIsSaving(false); }
       };
 
       const deletePlant = async (id) => {
         if (!user) return;
-        try {
-          const plantDoc = doc(db, 'artifacts', appId, 'users', user.uid, 'plants', id);
-          await deleteDoc(plantDoc);
-        } catch (err) {
-          console.error("삭제 실패", err);
-        }
+        try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'plants', id)); } catch (err) {}
       };
 
       const resetApp = () => {
-        setSelectedImage(null);
-        setImageBase64(null);
-        setCompressedImageUrl(null);
-        setResult(null);
-        setError(null);
-        setSaveSuccess(false);
+        if (selectedImage) URL.revokeObjectURL(selectedImage); // 메모리 확보
+        setSelectedImage(null); setSelectedFile(null); setCompressedImageUrl(null); setResult(null); setError(null); setSaveSuccess(false);
         if (cameraInputRef.current) cameraInputRef.current.value = "";
         if (albumInputRef.current) albumInputRef.current.value = "";
+      };
+
+      // 화면 배경 터치 시 모달 닫기 (안정성 점검 4)
+      const handleModalBackgroundClick = (e) => {
+        if (e.target === e.currentTarget) {
+          setShowImageSourceModal(false);
+        }
       };
 
       return (
@@ -401,9 +299,9 @@
                 )}
 
                 {error && (
-                  <div className="bg-red-50 text-red-600 p-4 rounded-2xl flex items-start gap-3 border border-red-100 shadow-sm">
+                  <div className="bg-red-50 text-red-600 p-4 rounded-2xl flex items-start gap-3 border border-red-100 shadow-sm animate-in fade-in">
                     <i class="ph ph-warning-circle text-xl shrink-0 mt-0.5"></i>
-                    <p className="text-sm font-medium leading-relaxed">{error}</p>
+                    <p className="text-sm font-bold leading-relaxed break-keep">{error}</p>
                   </div>
                 )}
 
@@ -422,9 +320,9 @@
                     <div className="relative rounded-[1.5rem] overflow-hidden shadow-inner">
                       <img src={selectedImage} alt="Selected Plant" className="w-full h-80 object-cover" />
                       {isAnalyzing && (
-                        <div className="absolute inset-0 bg-white/80 backdrop-blur-md flex flex-col items-center justify-center gap-4">
+                        <div className="absolute inset-0 bg-white/80 backdrop-blur-md flex flex-col items-center justify-center gap-4 z-10">
                           <i class="ph ph-spinner animate-spin text-5xl text-emerald-600"></i>
-                          <p className="text-lg font-bold text-emerald-800 animate-pulse">포이가 열심히 찾고 있어요...</p>
+                          <p className="text-lg font-bold text-emerald-800 animate-pulse">식물 박사님이 확인 중...</p>
                         </div>
                       )}
                     </div>
@@ -460,13 +358,13 @@
                         <i class="ph ph-arrows-clockwise text-xl"></i> 다시
                       </button>
                       {saveSuccess ? (
-                        <button disabled className="flex-[2] py-4 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-2xl flex items-center justify-center gap-2">
-                          <i class="ph ph-check-circle text-xl"></i> 도감 저장 완료
+                        <button disabled className="flex-[2] py-4 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-2xl flex items-center justify-center gap-2 cursor-not-allowed">
+                          <i class="ph ph-check-circle text-xl"></i> 저장 완료
                         </button>
                       ) : (
                         <button onClick={saveToDictionary} disabled={isSaving} className="flex-[2] py-4 bg-slate-800 text-white font-bold rounded-2xl hover:bg-slate-900 active:bg-black shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 transition-all">
                           {isSaving ? <i class="ph ph-spinner animate-spin text-xl"></i> : <i class="ph ph-floppy-disk text-xl"></i>}
-                          내 도감에 저장하기
+                          내 도감에 저장
                         </button>
                       )}
                     </div>
@@ -514,7 +412,6 @@
                         </div>
                       ))}
                     </div>
-
                     {plants.length > visibleCount && (
                       <button onClick={() => setVisibleCount(p => p + 10)} className="w-full py-3.5 bg-white border border-emerald-200 text-emerald-700 font-bold rounded-2xl hover:bg-emerald-50 transition-colors shadow-sm">
                         더 보기 ({visibleCount} / {plants.length})
@@ -541,34 +438,24 @@
             </div>
           </nav>
 
+          {/* 사진 선택 모달 (배경 클릭 시 닫힘 기능 적용) */}
           {showImageSourceModal && (
-            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-5">
+            <div 
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-5"
+              onClick={handleModalBackgroundClick}
+            >
               <div className="bg-white rounded-t-[2rem] sm:rounded-[2.5rem] w-full max-w-sm p-6 space-y-4 shadow-2xl animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-200 pb-safe">
                 <div className="text-center mb-4">
                   <h3 className="text-xl font-black text-slate-800">사진 가져오기</h3>
                   <p className="text-sm text-slate-500 font-medium mt-1">어떤 방법으로 식물 사진을 올릴까요?</p>
                 </div>
-                
-                <button 
-                  onClick={() => { cameraInputRef.current?.click(); setShowImageSourceModal(false); }} 
-                  className="w-full py-4 bg-emerald-50 text-emerald-700 font-bold rounded-2xl flex items-center justify-center gap-3 hover:bg-emerald-100 transition-colors border border-emerald-100 shadow-sm"
-                >
-                  <i class="ph ph-camera text-2xl"></i> 지금 카메라로 찍기
+                <button onClick={() => { cameraInputRef.current?.click(); setShowImageSourceModal(false); }} className="w-full py-4 bg-emerald-50 text-emerald-700 font-bold rounded-2xl flex items-center justify-center gap-3 hover:bg-emerald-100 border border-emerald-100">
+                  <i class="ph ph-camera text-2xl"></i> 카메라로 찍기
                 </button>
-                
-                <button 
-                  onClick={() => { albumInputRef.current?.click(); setShowImageSourceModal(false); }} 
-                  className="w-full py-4 bg-slate-50 text-slate-700 font-bold rounded-2xl flex items-center justify-center gap-3 hover:bg-slate-100 transition-colors border border-slate-200 shadow-sm"
-                >
-                  <i class="ph ph-images text-2xl"></i> 앨범에서 사진 선택
+                <button onClick={() => { albumInputRef.current?.click(); setShowImageSourceModal(false); }} className="w-full py-4 bg-slate-50 text-slate-700 font-bold rounded-2xl flex items-center justify-center gap-3 hover:bg-slate-100 border border-slate-200">
+                  <i class="ph ph-images text-2xl"></i> 앨범에서 선택
                 </button>
-                
-                <button 
-                  onClick={() => setShowImageSourceModal(false)} 
-                  className="w-full py-4 text-slate-400 font-bold rounded-2xl hover:text-slate-600 hover:bg-slate-50 transition-colors mt-2"
-                >
-                  취소
-                </button>
+                <button onClick={() => setShowImageSourceModal(false)} className="w-full py-4 text-slate-400 font-bold rounded-2xl hover:bg-slate-50 mt-2">취소</button>
               </div>
             </div>
           )}
@@ -581,27 +468,25 @@
                     <i class="ph ph-leaf text-3xl"></i>
                   </div>
                   <h3 className="text-2xl font-black text-slate-800 tracking-tight">도감 시작하기</h3>
-                  <p className="text-sm text-slate-500 mt-2 font-medium break-keep">이메일 없이 아이디와 비밀번호만으로 간편하게 도감을 보관하세요!</p>
+                  <p className="text-sm text-slate-500 mt-2 font-medium break-keep">아이디와 비밀번호만으로 간편하게 도감을 보관하세요!</p>
                 </div>
-
                 <div className="space-y-3.5">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-600 pl-1">아이디</label>
-                    <input type="text" placeholder="영문, 숫자 입력" value={loginId} onChange={(e) => setLoginId(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-slate-50 font-medium transition-all" />
+                    <input type="text" placeholder="영문, 숫자 입력" value={loginId} onChange={(e) => setLoginId(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl border border-slate-200 bg-slate-50 font-medium outline-none focus:border-emerald-500" />
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-600 pl-1">비밀번호</label>
-                    <input type="password" placeholder="6자리 이상 입력" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-slate-50 font-medium transition-all" />
+                    <input type="password" placeholder="6자리 이상 입력" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl border border-slate-200 bg-slate-50 font-medium outline-none focus:border-emerald-500" />
                   </div>
-                  {authError && <p className="text-red-500 text-xs px-2 font-bold animate-pulse">{authError}</p>}
+                  {authError && <p className="text-red-500 text-xs px-2 font-bold">{authError}</p>}
                 </div>
-
                 <div className="flex flex-col gap-2.5 pt-2">
                   <div className="flex gap-2.5">
-                    <button onClick={handleSignUp} className="flex-1 py-3.5 bg-emerald-50 text-emerald-700 font-black rounded-2xl hover:bg-emerald-100 transition-colors border border-emerald-100">새로 가입</button>
-                    <button onClick={handleLogin} className="flex-1 py-3.5 bg-emerald-600 text-white font-black rounded-2xl hover:bg-emerald-700 transition-colors shadow-lg">로그인</button>
+                    <button onClick={handleSignUp} className="flex-1 py-3.5 bg-emerald-50 text-emerald-700 font-black rounded-2xl hover:bg-emerald-100">새로 가입</button>
+                    <button onClick={handleLogin} className="flex-1 py-3.5 bg-emerald-600 text-white font-black rounded-2xl hover:bg-emerald-700 shadow-lg">로그인</button>
                   </div>
-                  <button onClick={() => setShowLoginModal(false)} className="w-full py-3.5 bg-white text-slate-400 font-bold rounded-2xl hover:text-slate-600 hover:bg-slate-50 transition-colors">닫기</button>
+                  <button onClick={() => setShowLoginModal(false)} className="w-full py-3.5 bg-white text-slate-400 font-bold rounded-2xl hover:bg-slate-50">닫기</button>
                 </div>
               </div>
             </div>
@@ -610,18 +495,11 @@
       );
     }
 
-    // Firebase 로딩이 완료되면 React를 화면에 그립니다.
     const startApp = () => {
       const root = ReactDOM.createRoot(document.getElementById('root'));
       root.render(<App />);
     };
-
-    // 안전장치: 이미 파이어베이스가 로드되었다면 즉시 실행, 아니면 신호를 기다렸다가 실행
-    if (window.firebaseAuth) {
-      startApp();
-    } else {
-      window.addEventListener('firebaseReady', startApp);
-    }
+    if (window.firebaseAuth) startApp(); else window.addEventListener('firebaseReady', startApp);
   </script>
 </body>
 </html>
