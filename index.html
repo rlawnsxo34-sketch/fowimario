@@ -548,10 +548,17 @@
     }
 
     // Firebase 로딩이 완료되면 React를 화면에 그립니다.
-    window.addEventListener('firebaseReady', () => {
+    const startApp = () => {
       const root = ReactDOM.createRoot(document.getElementById('root'));
       root.render(<App />);
-    });
+    };
+
+    // 안전장치: 이미 파이어베이스가 로드되었다면 즉시 실행, 아니면 신호를 기다렸다가 실행
+    if (window.firebaseAuth) {
+      startApp();
+    } else {
+      window.addEventListener('firebaseReady', startApp);
+    }
   </script>
 </body>
 </html>
