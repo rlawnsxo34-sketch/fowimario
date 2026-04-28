@@ -257,7 +257,8 @@
         setError(null);
 
         try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+          // 외부 환경에서 작동할 수 있도록 범용 모델(1.5-flash)로 변경
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
           const payload = {
             contents: [{
               role: "user",
@@ -275,8 +276,10 @@
             body: JSON.stringify(payload)
           });
 
-          const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          let jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
           if (jsonText) {
+            // AI가 간혹 마크다운 기호를 붙여주는 경우를 대비해 텍스트 정제
+            jsonText = jsonText.replace(/```json/gi, '').replace(/```/gi, '').trim();
             const parsedResult = JSON.parse(jsonText);
             setResult(parsedResult);
             setAnalysisCache(prev => ({ ...prev, [imageBase64]: parsedResult }));
@@ -284,6 +287,7 @@
             throw new Error("분석 결과를 가져오지 못했습니다.");
           }
         } catch (err) {
+          console.error("Analysis Error:", err); // 에러 내용 확인용 로그 추가
           setError("앗! 식물을 인식하는 데 문제가 생겼어요. 다시 시도해 주세요.");
         } finally {
           setIsAnalyzing(false);
@@ -399,7 +403,8 @@
                       )}
                     </div>
                   )}
-                  <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} ref={fileInputRef} className="hidden" />
+                  {/* 변경점: capture="environment" 속성을 제거하여 카메라/앨범 선택창이 뜨도록 수정 */}
+                  <input type="file" accept="image/*" onChange={handleImageChange} ref={fileInputRef} className="hidden" />
                 </div>
 
                 {selectedImage && !result && !isAnalyzing && (
