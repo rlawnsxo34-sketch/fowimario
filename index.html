@@ -5,17 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>방장산 식물 도감</title>
   
-  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  
-  <!-- Phosphor Icons -->
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
-  
-  <!-- React & ReactDOM -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  
-  <!-- Babel -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <style>
@@ -36,7 +29,6 @@
     import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
     import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-    // 파이어베이스 설정
     const firebaseConfig = {
       apiKey: "AIzaSyCZjnNVl9MkH2nqQ9O0vhKibiwGl-0ysRU",
       authDomain: "plant-book-84803.firebaseapp.com",
@@ -75,7 +67,7 @@
       const [result, setResult] = useState(null);
       const [error, setError] = useState(null);
       
-      // 🌟 신규 기능: 수동 입력 모드 상태
+      // 혹시라도 실패할 경우를 대비한 수동 모드 상태
       const [isManualMode, setIsManualMode] = useState(false);
       const [manualName, setManualName] = useState('');
       const [manualDesc, setManualDesc] = useState('');
@@ -95,14 +87,22 @@
       const DUMMY_DOMAIN = "@plant.local"; 
       const [showImageSourceModal, setShowImageSourceModal] = useState(false);
 
+      // 플랜트넷 API 키 복구 완료!
       const plantNetApiKey = "2b10Xd7k9obw7ZFJzVTET8O";
 
       useEffect(() => {
-        const initAuth = async () => {
-          try { await signInAnonymously(auth); } catch (err) { console.error("인증 실패:", err); }
-        };
-        initAuth();
-        const unsubscribe = onAuthStateChanged(auth, setUser);
+        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+          if (currentUser) {
+            setUser(currentUser);
+          } else {
+            setUser(null);
+            try { 
+              await signInAnonymously(auth); 
+            } catch (err) { 
+              console.warn("익명 로그인이 비활성화되어 있습니다. 수동 로그인이 필요합니다."); 
+            }
+          }
+        });
         return () => unsubscribe();
       }, []);
 
@@ -176,7 +176,7 @@
           if (selectedImage) URL.revokeObjectURL(selectedImage);
           setSelectedImage(URL.createObjectURL(file));
           setResult(null); setError(null); setSaveSuccess(false);
-          setIsManualMode(false); setManualName(''); setManualDesc(''); // 수동 모드 초기화
+          setIsManualMode(false); setManualName(''); setManualDesc('');
           const compressedDataUrl = await compressImage(file);
           setCompressedImageUrl(compressedDataUrl);
         }
@@ -201,6 +201,13 @@
             body: formData
           });
 
+          if (response.status === 404) {
+            setError("사진에서 식물을 찾지 못했어요. (식물이 아니거나 너무 흐려요) 직접 이름을 적어볼까요?");
+            setIsManualMode(true);
+            setIsAnalyzing(false);
+            return; 
+          }
+
           if (!response.ok) {
             throw new Error(`서버 응답 오류 (${response.status})`);
           }
@@ -224,17 +231,25 @@
           }
         } catch (err) {
           console.error("PlantNet Error:", err); 
-          // 💡 핵심: 네트워크 차단 등으로 AI 분석 실패 시, 수동 모드를 자동으로 열어줌!
-          setError("네트워크 보안 때문에 AI 통신이 차단되었어요. 대신 네이버 렌즈로 찾아보고 직접 이름을 적어볼까요?");
-          setIsManualMode(true);
+          // 💡 에러 발생 원인을 사용자에게 정확히 알려줍니다.
+          if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
+            setError("보안 차단: 미리보기 창이나 컴퓨터 파일에서는 작동하지 않습니다. 💡Netlify에 올려서 스마트폰으로 접속해주세요!");
+          } else {
+            setError("AI 통신이 원활하지 않아요. 구글/네이버로 찾아보고 직접 이름을 적어볼까요?");
+            setIsManualMode(true);
+          }
         } finally {
           setIsAnalyzing(false);
         }
       };
 
-      // 💡 수동 입력 데이터도 지원하도록 통합된 저장 기능
       const saveToDictionary = async () => {
-        if (!user || (!result && !manualName) || !compressedImageUrl || isSaving) return; 
+        if (!user) {
+          setError("도감에 저장하려면 먼저 우측 상단의 [로그인]을 진행해주세요!");
+          setShowLoginModal(true);
+          return;
+        }
+        if ((!result && !manualName) || !compressedImageUrl || isSaving) return; 
         setIsSaving(true);
         try {
           const finalName = result ? result.name : manualName;
@@ -335,7 +350,7 @@
                       {isAnalyzing && (
                         <div className="absolute inset-0 bg-white/80 backdrop-blur-md flex flex-col items-center justify-center gap-4 z-10">
                           <i class="ph ph-spinner animate-spin text-5xl text-emerald-600"></i>
-                          <p className="text-lg font-bold text-emerald-800 animate-pulse">포이가 확인 중...</p>
+                          <p className="text-lg font-bold text-emerald-800 animate-pulse">식물 박사님이 확인 중...</p>
                         </div>
                       )}
                     </div>
@@ -344,47 +359,28 @@
                   <input type="file" accept="image/*" onChange={handleImageChange} ref={albumInputRef} className="hidden" />
                 </div>
 
-                {/* 선택 버튼: AI 분석 vs 수동 입력 vs 네이버 렌즈 연동 */}
                 {selectedImage && !result && !isAnalyzing && !isManualMode && (
-                  <div className="flex flex-col gap-3">
-                    <button onClick={analyzePlant} className="w-full py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 active:bg-emerald-800 shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all">
-                      <i class="ph ph-leaf text-xl"></i> 내장 AI로 이름 확인하기
+                  <div className="flex gap-3">
+                    <button onClick={() => setIsManualMode(true)} className="flex-1 py-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-50 shadow-sm flex items-center justify-center gap-1.5 transition-all">
+                      <i class="ph ph-pencil-simple text-xl"></i> 직접 쓰기
                     </button>
-                    
-                    <div className="flex gap-3">
-                      <button 
-                        onClick={() => {
-                          setIsManualMode(true);
-                          window.open('https://m.naver.com', '_blank');
-                        }} 
-                        className="flex-[3] py-4 bg-[#03C75A] text-white font-bold rounded-2xl hover:bg-[#02b351] shadow-lg shadow-[#03C75A]/30 flex items-center justify-center gap-1.5 transition-all"
-                      >
-                        <i class="ph ph-scan text-xl"></i> 네이버 렌즈 열기
-                      </button>
-                      <button onClick={() => setIsManualMode(true)} className="flex-[2] py-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-50 shadow-sm flex items-center justify-center gap-1.5 transition-all">
-                        <i class="ph ph-pencil-simple text-xl"></i> 직접 쓰기
-                      </button>
-                    </div>
+                    <button onClick={analyzePlant} className="flex-[2] py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 active:bg-emerald-800 shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-1.5 transition-all">
+                      <i class="ph ph-leaf text-xl"></i> 이름 확인하기
+                    </button>
                   </div>
                 )}
 
-                {/* 수동 입력 폼 창 */}
                 {isManualMode && !result && (
                   <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-emerald-200 space-y-4 animate-in slide-in-from-bottom-4 relative">
                     <div className="inline-block px-3.5 py-1 bg-amber-100 text-amber-800 text-[11px] font-black rounded-full mb-1 tracking-wide">
                       수동 기록 모드 ✍️
                     </div>
-                    
-                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[13px] text-slate-600 font-medium leading-relaxed">
-                      💡 <strong className="text-[#03C75A]">네이버 앱</strong>의 <strong>초록색 동그라미(그린닷)</strong>를 눌러 렌즈로 찾은 뒤, 아래에 식물 이름을 적어주세요!
-                    </div>
-
                     <div className="space-y-3">
                       <div>
-                        <label className="text-xs font-bold text-slate-600 pl-1 block mb-1">식물 이름</label>
+                        <label className="text-xs font-bold text-slate-600 pl-1 block mb-1">식물 이름 (필수)</label>
                         <input 
                           type="text" 
-                          placeholder="예: 소나무" 
+                          placeholder="식물 이름을 적어주세요" 
                           value={manualName} 
                           onChange={(e) => setManualName(e.target.value)} 
                           className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 font-bold text-slate-800 outline-none focus:border-emerald-500 focus:bg-white transition-colors" 
@@ -403,7 +399,6 @@
                   </div>
                 )}
 
-                {/* AI 결과 창 */}
                 {result && (
                   <div className="bg-white p-7 rounded-[2rem] shadow-sm border border-emerald-100 space-y-4 relative overflow-hidden animate-in slide-in-from-bottom-4">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-bl-full -z-10 opacity-60"></div>
@@ -415,7 +410,6 @@
                   </div>
                 )}
 
-                {/* 하단 공통 버튼 (저장/다시) */}
                 {(result || isManualMode) && (
                   <div className="flex gap-3">
                     <button onClick={resetApp} className="flex-1 py-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-50 shadow-sm transition-all">
@@ -516,10 +510,10 @@
                   <p className="text-sm text-slate-500 font-medium mt-1">어떤 방법으로 식물 사진을 올릴까요?</p>
                 </div>
                 <button onClick={() => { cameraInputRef.current?.click(); setShowImageSourceModal(false); }} className="w-full py-4 bg-emerald-50 text-emerald-700 font-bold rounded-2xl flex items-center justify-center gap-3 hover:bg-emerald-100 border border-emerald-100">
-                  <i class="ph ph-camera text-2xl"></i> 카메라로 찍기
+                  <i class="ph ph-camera text-2xl"></i> 카메라로 직접 찍기
                 </button>
                 <button onClick={() => { albumInputRef.current?.click(); setShowImageSourceModal(false); }} className="w-full py-4 bg-slate-50 text-slate-700 font-bold rounded-2xl flex items-center justify-center gap-3 hover:bg-slate-100 border border-slate-200">
-                  <i class="ph ph-images text-2xl"></i> 앨범에서 선택
+                  <i class="ph ph-images text-2xl"></i> 휴대폰 앨범에서 선택
                 </button>
                 <button onClick={() => setShowImageSourceModal(false)} className="w-full py-4 text-slate-400 font-bold rounded-2xl hover:bg-slate-50 mt-2">취소</button>
               </div>
