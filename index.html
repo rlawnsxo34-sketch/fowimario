@@ -75,6 +75,11 @@
       const [result, setResult] = useState(null);
       const [error, setError] = useState(null);
       
+      // 🌟 신규 기능: 수동 입력 모드 상태
+      const [isManualMode, setIsManualMode] = useState(false);
+      const [manualName, setManualName] = useState('');
+      const [manualDesc, setManualDesc] = useState('');
+
       const cameraInputRef = useRef(null);
       const albumInputRef = useRef(null);
 
@@ -90,7 +95,6 @@
       const DUMMY_DOMAIN = "@plant.local"; 
       const [showImageSourceModal, setShowImageSourceModal] = useState(false);
 
-      // 발급받으신 플랜트넷 API 키 적용
       const plantNetApiKey = "2b10Xd7k9obw7ZFJzVTET8O";
 
       useEffect(() => {
@@ -134,7 +138,6 @@
         try { await signOut(auth); await signInAnonymously(auth); } catch (err) {}
       };
 
-      // 이미지 압축 데이터를 Blob(파일 형태)으로 변환하는 함수
       const dataURItoBlob = (dataURI) => {
         const byteString = atob(dataURI.split(',')[1]);
         const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
@@ -146,7 +149,6 @@
         return new Blob([ab], { type: mimeString });
       };
 
-      // 이미지 용량 압축 함수
       const compressImage = (file) => {
         return new Promise((resolve) => {
           const reader = new FileReader();
@@ -162,7 +164,7 @@
               canvas.width = width; canvas.height = height;
               const ctx = canvas.getContext('2d');
               ctx.drawImage(img, 0, 0, width, height);
-              resolve(canvas.toDataURL('image/jpeg', 0.7)); // 품질 70%로 압축
+              resolve(canvas.toDataURL('image/jpeg', 0.7)); 
             };
           };
         });
@@ -174,12 +176,12 @@
           if (selectedImage) URL.revokeObjectURL(selectedImage);
           setSelectedImage(URL.createObjectURL(file));
           setResult(null); setError(null); setSaveSuccess(false);
+          setIsManualMode(false); setManualName(''); setManualDesc(''); // 수동 모드 초기화
           const compressedDataUrl = await compressImage(file);
           setCompressedImageUrl(compressedDataUrl);
         }
       };
 
-      // 💡 플랜트넷 API 식물 분석 기능
       const analyzePlant = async () => {
         if (!compressedImageUrl || isAnalyzing) return; 
 
@@ -200,12 +202,7 @@
           });
 
           if (!response.ok) {
-            if (response.status === 404) {
-              throw new Error("사진에서 식물을 찾지 못했어요. 식물 잎이나 꽃이 잘 보이게 다시 찍어주세요!");
-            } else if (response.status === 401 || response.status === 403) {
-              throw new Error("서버 접속 권한이 없습니다. (플랜트넷 이메일 인증을 확인하거나 API 키를 확인해주세요)");
-            }
-            throw new Error(`(${response.status}) 일시적인 서버 통신 오류가 발생했어요.`);
+            throw new Error(`서버 응답 오류 (${response.status})`);
           }
 
           const data = await response.json();
@@ -227,25 +224,26 @@
           }
         } catch (err) {
           console.error("PlantNet Error:", err); 
-          // 💡 에러 메시지를 더욱 친절하고 정확하게 안내하도록 개선했습니다.
-          if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
-            setError("분석 실패: 보안 제한(CORS)으로 차단되었습니다. 미리보기 창이 아닌 깃허브나 Netlify에 배포된 실제 주소에서 테스트해주세요!");
-          } else {
-            setError(`분석 실패: ${err.message}`);
-          }
+          // 💡 핵심: 네트워크 차단 등으로 AI 분석 실패 시, 수동 모드를 자동으로 열어줌!
+          setError("네트워크 보안 때문에 AI 통신이 차단되었어요. 대신 네이버 렌즈로 찾아보고 직접 이름을 적어볼까요?");
+          setIsManualMode(true);
         } finally {
           setIsAnalyzing(false);
         }
       };
 
+      // 💡 수동 입력 데이터도 지원하도록 통합된 저장 기능
       const saveToDictionary = async () => {
-        if (!user || !result || !compressedImageUrl || isSaving) return; 
+        if (!user || (!result && !manualName) || !compressedImageUrl || isSaving) return; 
         setIsSaving(true);
         try {
+          const finalName = result ? result.name : manualName;
+          const finalDesc = result ? result.description : (manualDesc || "직접 관찰하고 기록한 식물입니다.");
+
           const plantsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'plants');
           await addDoc(plantsRef, {
-            name: result.name,
-            description: result.description,
+            name: finalName,
+            description: finalDesc,
             imageData: compressedImageUrl,
             createdAt: Date.now()
           });
@@ -261,6 +259,7 @@
       const resetApp = () => {
         if (selectedImage) URL.revokeObjectURL(selectedImage); 
         setSelectedImage(null); setCompressedImageUrl(null); setResult(null); setError(null); setSaveSuccess(false);
+        setIsManualMode(false); setManualName(''); setManualDesc('');
         if (cameraInputRef.current) cameraInputRef.current.value = "";
         if (albumInputRef.current) albumInputRef.current.value = "";
       };
@@ -307,13 +306,13 @@
                     </div>
                     <div>
                       <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight">식물을 발견했나요?</h2>
-                      <p className="text-slate-500 mt-1.5 text-sm font-medium">포이와 함께 사진을 찍어 식물을 알아보세요!</p>
+                      <p className="text-slate-500 mt-1.5 text-sm font-medium">사진을 찍어 도감에 보관해보세요!</p>
                     </div>
                   </div>
                 )}
 
                 {error && (
-                  <div className="bg-red-50 text-red-600 p-4 rounded-2xl flex items-start gap-3 border border-red-100 shadow-sm animate-in fade-in">
+                  <div className="bg-amber-50 text-amber-700 p-4 rounded-2xl flex items-start gap-3 border border-amber-200 shadow-sm animate-in fade-in">
                     <i class="ph ph-warning-circle text-xl shrink-0 mt-0.5"></i>
                     <p className="text-sm font-bold leading-relaxed break-keep">{error}</p>
                   </div>
@@ -336,7 +335,7 @@
                       {isAnalyzing && (
                         <div className="absolute inset-0 bg-white/80 backdrop-blur-md flex flex-col items-center justify-center gap-4 z-10">
                           <i class="ph ph-spinner animate-spin text-5xl text-emerald-600"></i>
-                          <p className="text-lg font-bold text-emerald-800 animate-pulse">식물 박사님이 확인 중...</p>
+                          <p className="text-lg font-bold text-emerald-800 animate-pulse">포이가 확인 중...</p>
                         </div>
                       )}
                     </div>
@@ -345,43 +344,97 @@
                   <input type="file" accept="image/*" onChange={handleImageChange} ref={albumInputRef} className="hidden" />
                 </div>
 
-                {selectedImage && !result && !isAnalyzing && (
-                  <div className="flex gap-3">
-                    <button onClick={resetApp} className="flex-1 py-4 bg-white border border-slate-200 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 active:bg-slate-100 shadow-sm transition-all">
-                      다시 찍기
+                {/* 선택 버튼: AI 분석 vs 수동 입력 vs 네이버 렌즈 연동 */}
+                {selectedImage && !result && !isAnalyzing && !isManualMode && (
+                  <div className="flex flex-col gap-3">
+                    <button onClick={analyzePlant} className="w-full py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 active:bg-emerald-800 shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all">
+                      <i class="ph ph-leaf text-xl"></i> 내장 AI로 이름 확인하기
                     </button>
-                    <button onClick={analyzePlant} className="flex-[2] py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 active:bg-emerald-800 shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all">
-                      <i class="ph ph-leaf text-xl"></i> 이름 확인하기
-                    </button>
+                    
+                    <div className="flex gap-3">
+                      <button 
+                        onClick={() => {
+                          setIsManualMode(true);
+                          window.open('https://m.naver.com', '_blank');
+                        }} 
+                        className="flex-[3] py-4 bg-[#03C75A] text-white font-bold rounded-2xl hover:bg-[#02b351] shadow-lg shadow-[#03C75A]/30 flex items-center justify-center gap-1.5 transition-all"
+                      >
+                        <i class="ph ph-scan text-xl"></i> 네이버 렌즈 열기
+                      </button>
+                      <button onClick={() => setIsManualMode(true)} className="flex-[2] py-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-50 shadow-sm flex items-center justify-center gap-1.5 transition-all">
+                        <i class="ph ph-pencil-simple text-xl"></i> 직접 쓰기
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                {result && (
-                  <div className="animate-in fade-in space-y-4">
-                    <div className="bg-white p-7 rounded-[2rem] shadow-sm border border-emerald-100 space-y-4 relative overflow-hidden">
-                      <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-bl-full -z-10 opacity-60"></div>
-                      <div className="inline-block px-3.5 py-1.5 bg-emerald-100 text-emerald-800 text-xs font-black rounded-full mb-2 tracking-wide">
-                        인식 완료 ✨
-                      </div>
-                      <h3 className="text-3xl font-black text-slate-800 break-keep leading-tight">{result.name}</h3>
-                      <p className="text-slate-600 leading-relaxed text-lg break-keep font-medium">{result.description}</p>
+                {/* 수동 입력 폼 창 */}
+                {isManualMode && !result && (
+                  <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-emerald-200 space-y-4 animate-in slide-in-from-bottom-4 relative">
+                    <div className="inline-block px-3.5 py-1 bg-amber-100 text-amber-800 text-[11px] font-black rounded-full mb-1 tracking-wide">
+                      수동 기록 모드 ✍️
+                    </div>
+                    
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[13px] text-slate-600 font-medium leading-relaxed">
+                      💡 <strong className="text-[#03C75A]">네이버 앱</strong>의 <strong>초록색 동그라미(그린닷)</strong>를 눌러 렌즈로 찾은 뒤, 아래에 식물 이름을 적어주세요!
                     </div>
 
-                    <div className="flex gap-3">
-                      <button onClick={resetApp} className="flex-1 py-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-50 shadow-sm transition-all">
-                        <i class="ph ph-arrows-clockwise text-xl"></i> 다시
-                      </button>
-                      {saveSuccess ? (
-                        <button disabled className="flex-[2] py-4 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-2xl flex items-center justify-center gap-2 cursor-not-allowed">
-                          <i class="ph ph-check-circle text-xl"></i> 저장 완료
-                        </button>
-                      ) : (
-                        <button onClick={saveToDictionary} disabled={isSaving} className="flex-[2] py-4 bg-slate-800 text-white font-bold rounded-2xl hover:bg-slate-900 active:bg-black shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 transition-all">
-                          {isSaving ? <i class="ph ph-spinner animate-spin text-xl"></i> : <i class="ph ph-floppy-disk text-xl"></i>}
-                          내 도감에 저장
-                        </button>
-                      )}
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-xs font-bold text-slate-600 pl-1 block mb-1">식물 이름</label>
+                        <input 
+                          type="text" 
+                          placeholder="예: 소나무" 
+                          value={manualName} 
+                          onChange={(e) => setManualName(e.target.value)} 
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 font-bold text-slate-800 outline-none focus:border-emerald-500 focus:bg-white transition-colors" 
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-slate-600 pl-1 block mb-1">특징 메모 (선택)</label>
+                        <textarea 
+                          placeholder="식물의 특징을 적어보세요" 
+                          value={manualDesc} 
+                          onChange={(e) => setManualDesc(e.target.value)} 
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 font-medium text-slate-700 outline-none focus:border-emerald-500 focus:bg-white transition-colors resize-none h-20" 
+                        />
+                      </div>
                     </div>
+                  </div>
+                )}
+
+                {/* AI 결과 창 */}
+                {result && (
+                  <div className="bg-white p-7 rounded-[2rem] shadow-sm border border-emerald-100 space-y-4 relative overflow-hidden animate-in slide-in-from-bottom-4">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-bl-full -z-10 opacity-60"></div>
+                    <div className="inline-block px-3.5 py-1.5 bg-emerald-100 text-emerald-800 text-[11px] font-black rounded-full mb-1 tracking-wide">
+                      AI 인식 완료 ✨
+                    </div>
+                    <h3 className="text-3xl font-black text-slate-800 break-keep leading-tight">{result.name}</h3>
+                    <p className="text-slate-600 leading-relaxed text-lg break-keep font-medium">{result.description}</p>
+                  </div>
+                )}
+
+                {/* 하단 공통 버튼 (저장/다시) */}
+                {(result || isManualMode) && (
+                  <div className="flex gap-3">
+                    <button onClick={resetApp} className="flex-1 py-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-50 shadow-sm transition-all">
+                      <i class="ph ph-arrows-clockwise text-xl"></i> 다시
+                    </button>
+                    {saveSuccess ? (
+                      <button disabled className="flex-[2] py-4 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-2xl flex items-center justify-center gap-2 cursor-not-allowed">
+                        <i class="ph ph-check-circle text-xl"></i> 저장 완료
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={saveToDictionary} 
+                        disabled={isSaving || (isManualMode && !manualName.trim())} 
+                        className="flex-[2] py-4 bg-slate-800 text-white font-bold rounded-2xl hover:bg-slate-900 active:bg-black shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                      >
+                        {isSaving ? <i class="ph ph-spinner animate-spin text-xl"></i> : <i class="ph ph-floppy-disk text-xl"></i>}
+                        내 도감에 저장
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -452,7 +505,6 @@
             </div>
           </nav>
 
-          {/* 사진 선택 모달 (배경 클릭 시 닫힘 기능 적용) */}
           {showImageSourceModal && (
             <div 
               className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-5"
