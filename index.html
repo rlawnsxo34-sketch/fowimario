@@ -188,7 +188,6 @@
 
         try {
           const formData = new FormData();
-          // 원본 파일 대신 용량이 작게 압축된 이미지를 파일 형태로 서버에 보냅니다.
           const imageBlob = dataURItoBlob(compressedImageUrl);
           formData.append('images', imageBlob, 'plant.jpg');
           formData.append('organs', 'auto'); 
@@ -204,7 +203,7 @@
             if (response.status === 404) {
               throw new Error("사진에서 식물을 찾지 못했어요. 식물 잎이나 꽃이 잘 보이게 다시 찍어주세요!");
             } else if (response.status === 401 || response.status === 403) {
-              throw new Error("서버 접속 권한이 없습니다. (API 키 오류)");
+              throw new Error("서버 접속 권한이 없습니다. (플랜트넷 이메일 인증을 확인하거나 API 키를 확인해주세요)");
             }
             throw new Error(`(${response.status}) 일시적인 서버 통신 오류가 발생했어요.`);
           }
@@ -228,7 +227,12 @@
           }
         } catch (err) {
           console.error("PlantNet Error:", err); 
-          setError(`분석 실패: ${err.message}`);
+          // 💡 에러 메시지를 더욱 친절하고 정확하게 안내하도록 개선했습니다.
+          if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
+            setError("분석 실패: 보안 제한(CORS)으로 차단되었습니다. 미리보기 창이 아닌 깃허브나 Netlify에 배포된 실제 주소에서 테스트해주세요!");
+          } else {
+            setError(`분석 실패: ${err.message}`);
+          }
         } finally {
           setIsAnalyzing(false);
         }
